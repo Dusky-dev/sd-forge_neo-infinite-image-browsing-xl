@@ -75,6 +75,11 @@ try:
 except Exception as e:
     logger.error(e)
 
+try:
+    import pillow_jxl
+except Exception as e:
+    logger.error(e)
+
 import requests
 import dotenv
 
