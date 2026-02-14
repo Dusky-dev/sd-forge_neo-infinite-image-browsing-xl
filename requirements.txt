@@ -5,6 +5,7 @@ python-dotenv
 Pillow
 pillow-avif-plugin
 imageio
+imageio-ffmpeg
 av>=14,<15
 lxml
 filetype
