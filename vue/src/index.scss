@@ -147,7 +147,7 @@ body {
     margin: 0;
   }
   .ant-modal-wrap,.ant-message, .ant-tooltip  {
-    z-index: 10000;
+    z-index: 100000;
   }
   
   .hidden-antd-btns-modal .ant-modal-confirm-btns {

@@ -186,6 +186,11 @@ export const getImageGenerationInfo = async (path: string) => {
     .data as string
 }
 
+export const updateExif = async (path: string, exif: string) => {
+  const resp = await axiosInst.value.post('/update_exif', { path, exif })
+  return resp.data as { success: boolean, message: string }
+}
+
 export const getImageExif = async (path: string) => {
   return (await axiosInst.value.get(`/image_exif?path=${encodeURIComponent(path)}`))
     .data as Record<string, string>

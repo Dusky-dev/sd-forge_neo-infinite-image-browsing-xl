@@ -79,7 +79,7 @@ export function parse(parameters: string): ImageMeta {
   const extraJsonMetaInfoMatch = parameters.match(/\nextraJsonMetaInfo:\s*(\{[\s\S]*\})\s*$/);
   if (extraJsonMetaInfoMatch) {
     try {
-      metadata.extraJsonMetaInfo = JSON.parse(extraJsonMetaInfoMatch[1]);
+      metadata.extraJsonMetaInfo = JSON.parse(unescapeHtml(extraJsonMetaInfoMatch[1]));
       // 从原始参数中移除 extraJsonMetaInfo 部分
       parameters = parameters.replace(/\nextraJsonMetaInfo:\s*\{[\s\S]*\}\s*$/, '');
     } catch (e) {

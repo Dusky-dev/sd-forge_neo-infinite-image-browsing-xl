@@ -557,5 +557,39 @@ export const zhHans = {
   loadingTip10: '🤖 AI Agent 集成\n\n现在你可以让 AI agent 来使用 IIB 帮助进行图像管理、标签整理和智能搜索。通过 API 接口，AI 可以访问所有 IIB 功能，实现自动化工作流程。|info',
 
   // ===== 视频原地播放 =====
-  playInline: '在此播放'
+  playInline: '在此播放',
+
+  // ===== 提示词编辑 =====
+  editPrompt: '编辑',
+  editPromptTitle: '编辑提示词 - {name}',
+  positivePrompt: '正向提示词',
+  negativePrompt: '负向提示词',
+  otherInfo: '其他信息',
+  savePrompt: '保存提示词',
+  savePromptSuccess: '提示词保存成功',
+  savePromptFailed: '提示词保存失败',
+  promptEditedMark: '已手动编辑',
+  promptModifiedTip: '此提示词已被手动编辑，将覆盖原始文件中的提示词',
+
+  // 新增：PromptEditorModal 相关
+  positivePromptRequired: '正向提示词不能为空',
+  fixErrorsBeforeSave: '请修正所有错误后再保存',
+  extraMetaInfoTitle: 'Extra Meta Info (KV 编辑器)',
+  addKvButton: '+ 添加',
+  extraMetaInfoHint: '支持任何合法 JSON 值（对象、数组、数字、布尔等）。字符串模式会自动添加双引号。',
+  noExtraMetaInfo: '暂无 Extra Meta Info，点击"添加"按钮添加键值对',
+  otherInfoHint: '仅支持简单字符串或数值，不能包含特殊符号或换行',
+
+  // 新增：KvPairEditor 相关
+  keyRequired: 'Key 不能为空',
+  keyMustBeUnique: 'Key 已存在，请使用唯一的 key',
+  jsonFormatError: 'JSON 格式错误，请检查语法',
+  stringMode: '字符串',
+  jsonMode: 'JSON',
+  delete: '删除',
+  keyPlaceholder: 'Key',
+  jsonValuePlaceholder: 'JSON Value',
+  stringValuePlaceholder: '字符串值',
+  clearBeforeSwitchToJson: '切换到 JSON 模式前请先清空当前值',
+  clearBeforeSwitchToString: '切换到字符串模式前请先清空当前值'
 }

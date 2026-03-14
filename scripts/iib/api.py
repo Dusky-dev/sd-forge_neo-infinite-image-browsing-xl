@@ -15,6 +15,7 @@ from scripts.iib.tool import (
     is_media_file,
     get_cache_dir,
     get_formatted_date,
+    get_modified_date,
     is_win,
     cwd,
     locale,
@@ -807,11 +808,24 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
 
     @app.get(api_base + "/image_geninfo", dependencies=[Depends(verify_secret)])
     async def image_geninfo(path: str):
-        # 使用 get_exif_data 函数，它已经支持视频文件
         from scripts.iib.db.update_image_data import get_exif_data
+        conn = DataBase.get_conn()
         try:
+            # 优先从数据库查询
+            img = DbImg.get(conn, path)
+            if img and img.exif:
+                return img.exif
+
+            # 数据库中没有，从文件读取
             result = get_exif_data(path)
-            return result.raw_info or ""
+            raw_info = result.raw_info or ""
+
+            # 如果 DbImg 存在，将读取到的数据缓存到数据库
+            if img and raw_info:
+                img.exif = raw_info
+                img.update(conn)
+
+            return raw_info
         except Exception as e:
             logger.error(f"Failed to get geninfo for {path}: {e}")
             return ""
@@ -850,14 +864,43 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                         exif_data = {str(k): str(v) for k, v in exif_dict.items()}
                 except AttributeError:
                     pass
-                
+
                 info_data = {k: str(v) for k, v in img.info.items() if not k.startswith('exif')}
                 exif_data.update(info_data)
-                
+
                 return exif_data
         except Exception as e:
             logger.error(f"Failed to get exif for {path}: {e}")
             return {}
+
+    class UpdateExifReq(BaseModel):
+        path: str
+        exif: str
+
+    @app.post(api_base + "/update_exif", dependencies=[Depends(verify_secret)])
+    async def update_exif(req: UpdateExifReq):
+        """更新图片/视频的 exif 信息"""
+        conn = DataBase.get_conn()
+        try:
+            img = DbImg.get(conn, req.path)
+            if img:
+                img.update_exif(conn, req.exif)
+                conn.commit()
+                return {"success": True, "message": "Exif updated successfully"}
+            else:
+                # 如果数据库中没有记录，创建新记录
+                img = DbImg(path=req.path, exif=req.exif, exif_edited=True)
+                # 获取文件信息
+                if os.path.exists(req.path):
+                    stat = os.stat(req.path)
+                    img.size = stat.st_size
+                    img.date = get_modified_date(req.path)
+                img.save(conn)
+                conn.commit()
+                return {"success": True, "message": "Exif created successfully"}
+        except Exception as e:
+            logger.error(f"Failed to update exif for {req.path}: {e}", stack_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
 
 
     class CheckPathExistsReq(BaseModel):

@@ -146,6 +146,11 @@ def get_extra_meta_keys_from_plugins(source_identifier: str):
 
 def build_single_img_idx(conn, file_path, is_rebuild, safe_save_img_tag):
     img = DbImg.get(conn, file_path)
+
+    if img and is_rebuild and img.exif_edited:
+        logger.info(f"Image {file_path} has been manually edited, skipping rebuild.")
+        return
+
     parsed_params = None
     if is_rebuild:
         info = get_exif_data(file_path)

@@ -97,9 +97,10 @@ class DataBase:
 
 
 class Image:
-    def __init__(self, path, exif=None, size=0, date="", id=None):
+    def __init__(self, path, exif=None, size=0, date="", exif_edited=False, id=None):
         self.path = path
         self.exif = exif
+        self.exif_edited = exif_edited
         self.id = id
         self.size = size
         self.date = date
@@ -120,10 +121,20 @@ class Image:
     def save(self, conn):
         with closing(conn.cursor()) as cur:
             cur.execute(
-                "INSERT OR REPLACE  INTO image (path, exif, size, date) VALUES (?, ?, ?, ?)",
-                (self.path, self.exif, self.size, self.date),
+                "INSERT OR REPLACE INTO image (path, exif, exif_edited, size, date) VALUES (?, ?, ?, ?, ?)",
+                (self.path, self.exif, int(self.exif_edited), self.size, self.date),
             )
             self.id = cur.lastrowid
+
+    def update_exif(self, conn: Connection, exif: str, mark_edited: bool = True):
+        """更新图片的 exif 信息并标记为已编辑"""
+        with closing(conn.cursor()) as cur:
+            cur.execute(
+                "UPDATE image SET exif = ?, exif_edited = ? WHERE id = ?",
+                (exif, mark_edited, self.id),
+            )
+        self.exif = exif
+        self.exif_edited = mark_edited
 
     def update_path(self, conn: Connection, new_path: str, force=False):
         self.path = os.path.normpath(new_path)
@@ -174,10 +185,21 @@ class Image:
                             path TEXT UNIQUE,
                             exif TEXT,
                             size INTEGER,
-                            date TEXT
+                            date TEXT,
+                            exif_edited INTEGER DEFAULT 0
                         )"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS image_idx_path ON image(path)")
+
+            # 数据库迁移：为旧表添加 exif_edited 列
+            try:
+                cur.execute(
+                    """ALTER TABLE image
+                    ADD COLUMN exif_edited INTEGER DEFAULT 0"""
+                )
+            except sqlite3.OperationalError:
+                # 列已存在，忽略
+                pass
 
     @classmethod
     def count(cls, conn):
@@ -188,7 +210,11 @@ class Image:
 
     @classmethod
     def from_row(cls, row: tuple):
-        image = cls(path=row[1], exif=row[2], size=row[3], date=row[4])
+        """从数据库行创建 Image 对象
+
+        字段顺序：id=0, path=1, exif=2, size=3, date=4, exif_edited=5
+        """
+        image = cls(path=row[1], exif=row[2], size=row[3], date=row[4], exif_edited=bool(row[5])  )
         image.id = row[0]
         return image
 
