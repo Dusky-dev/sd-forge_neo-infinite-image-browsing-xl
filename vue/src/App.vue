@@ -8,6 +8,7 @@ import SplitViewTab from '@/page/SplitViewTab/SplitViewTab.vue'
 import OrganizeJobsPanel from '@/components/OrganizeJobsPanel.vue'
 import OrganizePreview from '@/page/OrganizeFiles/OrganizePreview.vue'
 import SmartOrganizeConfigModal from '@/components/SmartOrganizeConfigModal.vue'
+import PromptEditorModal from '@/components/PromptEditorModal.vue'
 import { Dict, createReactiveQueue, globalEvents, useGlobalEventListen } from './util'
 import { resolveQueryActions } from './queryActions'
 import { refreshTauriConf, tauriConf } from './util/tauriAppConf'
@@ -251,6 +252,9 @@ onMounted(async () => {
 
   <!-- Smart Organize Config Modal -->
   <SmartOrganizeConfigModal />
+
+  <!-- Prompt Editor Modal (自包含组件，通过全局事件控制) -->
+  <PromptEditorModal />
 
   <!-- Fullscreen Loading for Moving Files -->
   <div v-if="isMovingFiles" class="moving-files-overlay">

@@ -107,6 +107,8 @@ export const { useEventListen: useGlobalEventListen, eventEmitter: globalEvents 
     closeTabPane(tabIdx: number, key: string): void
     updateGlobalSettingDone(): void
     refreshFileView(args?: { paths?: string[] }): void
+    openPromptEditor(data: { file: { name: string; fullpath: string }}): void
+    promptEditorUpdated(): void
   }>()
 
 type AsyncFunction<T> = (...args: any[]) => Promise<T>

@@ -5,7 +5,7 @@ import { useTagStore } from '@/store/useTagStore'
 import { useGlobalStore } from '@/store/useGlobalStore'
 import { useLocalStorage, onLongPress } from '@vueuse/core'
 import { copy2clipboardI18n, isVideoFile, isAudioFile } from '@/util'
-import { openAddNewTagModal } from '@/components/functionalCallableComp'
+import { openAddNewTagModal, openEditPromptModal } from '@/components/functionalCallableComp'
 import { toggleCustomTagToImg } from '@/api/db'
 import { deleteFiles } from '@/api/files'
 import { getImageGenerationInfo, openFolder, openWithDefaultApp } from '@/api'
@@ -31,7 +31,8 @@ import {
   CopyOutlined,
   LinkOutlined,
   FileTextOutlined,
-  InfoCircleOutlined
+  InfoCircleOutlined,
+  EditOutlined
 } from '@/icon'
 import { t } from '@/i18n'
 import type { StyleValue } from 'vue'
@@ -837,11 +838,6 @@ const loadCurrentItemPrompt = async () => {
     imageGenInfo.value = ''
     return
   }
-  const nameOrUrl = currentItem.name || currentItem.url
-  if (isVideoFile(nameOrUrl) || isAudioFile(nameOrUrl)) {
-    imageGenInfo.value = ''
-    return
-  }
   const fullpath = (currentItem as any)?.fullpath || currentItem.id
   if (!fullpath) {
     imageGenInfo.value = ''
@@ -1251,6 +1247,18 @@ watch(() => autoPlayMode.value, () => {
             <div class="panel-section prompt-section">
               <div class="section-title">
                 <FileTextOutlined /> <span>Prompt</span>
+                <button
+                  v-if="!promptLoading"
+                  @click="async () => {
+                    await openEditPromptModal(tiktokStore.currentItem as any)
+                    // 重新加载提示词
+                    await loadCurrentItemPrompt()
+                  }"
+                  class="edit-prompt-btn"
+                  :title="t('editPrompt')"
+                >
+                  <EditOutlined />
+                </button>
               </div>
               <div class="prompt-content">
                 <div v-if="promptLoading" class="prompt-empty">...</div>
@@ -1831,6 +1839,26 @@ watch(() => autoPlayMode.value, () => {
   margin-bottom: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+
+  .edit-prompt-btn {
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    color: rgba(255, 255, 255, 0.8);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: rgba(255, 255, 255, 1);
+    }
+  }
 }
 
 .tags-content {
@@ -1856,7 +1884,6 @@ watch(() => autoPlayMode.value, () => {
       .natural-text {
         margin: 0.5em 0;
         line-height: 1.6em;
-        text-align: justify;
         color: rgba(255, 255, 255, 0.8);
       }
 

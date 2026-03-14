@@ -319,5 +319,39 @@ export const de: Partial<IIBI18nMap> = {
   loadingTip10: '🤖 KI-Agenten-Integration\n\nSie können jetzt KI-Agenten IIB nutzen lassen, um bei Bildverwaltung, Tag-Organisation und intelligenter Suche zu helfen. Über die API-Schnittstelle kann die KI auf alle IIB-Funktionen zugreifen und automatisierte Workflows erstellen.|info',
 
   // ===== Video Inline Play =====
-  playInline: 'Hier abspielen'
+  playInline: 'Hier abspielen',
+
+  // ===== Prompt-Bearbeitung =====
+  editPrompt: 'bearbeiten',
+  editPromptTitle: 'Prompt bearbeiten - {name}',
+  positivePrompt: 'Positiver Prompt',
+  negativePrompt: 'Negativer Prompt',
+  otherInfo: 'Weitere Informationen',
+  savePrompt: 'Prompt speichern',
+  savePromptSuccess: 'Prompt erfolgreich gespeichert',
+  savePromptFailed: 'Prompt-Speicherung fehlgeschlagen',
+  promptEditedMark: 'Manuell bearbeitet',
+  promptModifiedTip: 'Dieser Prompt wurde manuell bearbeitet und überschreibt den ursprünglichen Prompt aus der Datei',
+
+  // PromptEditorModal bezogen
+  positivePromptRequired: 'Positiver Prompt darf nicht leer sein',
+  fixErrorsBeforeSave: 'Bitte beheben Sie alle Fehler vor dem Speichern',
+  extraMetaInfoTitle: 'Extra Meta Info (KV-Editor)',
+  addKvButton: '+ Hinzufügen',
+  extraMetaInfoHint: 'Unterstützt alle gültigen JSON-Werte (Objekte, Arrays, Zahlen, Boolesche Werte, etc.). String-Modus fügt automatisch doppelte Anführungszeichen hinzu.',
+  noExtraMetaInfo: 'Keine Extra Meta Info, klicken Sie auf "Hinzufügen" um Schlüssel-Wert-Paare hinzuzufügen',
+  otherInfoHint: 'Unterstützt nur einfache Zeichenfolgen oder Zahlen, keine speziellen Symbole oder Zeilenumbrüche',
+
+  // KvPairEditor bezogen
+  keyRequired: 'Key darf nicht leer sein',
+  keyMustBeUnique: 'Key existiert bereits, bitte verwenden Sie einen eindeutigen Key',
+  jsonFormatError: 'JSON-Formatfehler, bitte Syntax überprüfen',
+  stringMode: 'Zeichenfolge',
+  jsonMode: 'JSON',
+  delete: 'Löschen',
+  keyPlaceholder: 'Key',
+  jsonValuePlaceholder: 'JSON-Wert',
+  stringValuePlaceholder: 'Zeichenfolgenwert',
+  clearBeforeSwitchToJson: 'Bitte aktuellen Wert leeren vor dem Wechsel zu JSON-Modus',
+  clearBeforeSwitchToString: 'Bitte aktuellen Wert leeren vor dem Wechsel zu Zeichenfolgen-Modus'
 }

@@ -559,5 +559,39 @@ export const zhHant: Partial<IIBI18nMap> = {
   loadingTip10: '🤖 AI Agent 整合\n\n現在您可以讓 AI agent 使用 IIB 來協助進行圖片管理、標籤整理和智慧搜尋。透過 API 介面，AI 可以存取所有 IIB 功能，實現自動化工作流程。|info',
 
   // ===== 視頻原地播放 =====
-  playInline: '在此播放'
+  playInline: '在此播放',
+
+  // ===== 提示詞編輯 =====
+  editPrompt: '編輯',
+  editPromptTitle: '編輯提示詞 - {name}',
+  positivePrompt: '正向提示詞',
+  negativePrompt: '負向提示詞',
+  otherInfo: '其他信息',
+  savePrompt: '保存提示詞',
+  savePromptSuccess: '提示詞保存成功',
+  savePromptFailed: '提示詞保存失敗',
+  promptEditedMark: '已手動編輯',
+  promptModifiedTip: '此提示詞已被手動編輯，將覆蓋原始文件中的提示詞',
+
+  // 新增：PromptEditorModal 相關
+  positivePromptRequired: '正向提示詞不能為空',
+  fixErrorsBeforeSave: '請修正所有錯誤後再保存',
+  extraMetaInfoTitle: 'Extra Meta Info (KV 編輯器)',
+  addKvButton: '+ 添加',
+  extraMetaInfoHint: '支持任何合法 JSON 值（對象、數組、數字、布爾等）。字符串模式會自動添加雙引號。',
+  noExtraMetaInfo: '暫無 Extra Meta Info，點擊"添加"按鈕添加鍵值對',
+  otherInfoHint: '僅支持簡單字符串或數值，不能包含特殊符號或換行',
+
+  // 新增：KvPairEditor 相關
+  keyRequired: 'Key 不能為空',
+  keyMustBeUnique: 'Key 已存在，請使用唯一的 key',
+  jsonFormatError: 'JSON 格式錯誤，請檢查語法',
+  stringMode: '字符串',
+  jsonMode: 'JSON',
+  delete: '刪除',
+  keyPlaceholder: 'Key',
+  jsonValuePlaceholder: 'JSON Value',
+  stringValuePlaceholder: '字符串值',
+  clearBeforeSwitchToJson: '切換到 JSON 模式前請先清空當前值',
+  clearBeforeSwitchToString: '切換到字符串模式前請先清空當前值'
 }

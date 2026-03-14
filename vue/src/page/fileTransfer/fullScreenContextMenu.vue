@@ -18,7 +18,8 @@ import {
   EllipsisOutlined,
   fullscreen,
   SortAscendingOutlined,
-  AppstoreOutlined
+  AppstoreOutlined,
+  EditOutlined
 } from '@/icon'
 import { t } from '@/i18n'
 import { createReactiveQueue, unescapeHtml } from '@/util'
@@ -29,7 +30,7 @@ import { parse } from '@/util/stable-diffusion-image-metadata'
 import { useFullscreenLayout } from '@/util/useFullscreenLayout'
 import { useMouseInElement } from '@vueuse/core'
 import { closeImageFullscreenPreview } from '@/util/imagePreviewOperation'
-import { openAddNewTagModal } from '@/components/functionalCallableComp'
+import { openAddNewTagModal, openEditPromptModal } from '@/components/functionalCallableComp'
 import { prefix } from '@/util/const'
 // @ts-ignore
 import * as Pinyin from 'jian-pinyin'
@@ -434,6 +435,18 @@ Please return only tag names, do not include any other content.`
   }
 }
 
+// 编辑提示词并重新加载
+const editPromptAndReload = async () => {
+  await openEditPromptModal(props.file)
+  const path = props.file?.fullpath
+  if (path) {
+    q.tasks.forEach((v) => v.cancel())
+    q.pushAction(() => getImageGenerationInfo(path)).res.then((v) => {
+      imageGenInfo.value = v
+    })
+  }
+}
+
 </script>
 
 <template>
@@ -516,7 +529,6 @@ Please return only tag names, do not include any other content.`
           }}</a-button>
           <a-button 
             @click="analyzeTagsWithAI"
-            type="primary"
             :loading="analyzingTags"
             v-if="imageGenInfo && global.conf?.all_custom_tags?.length"
           >
@@ -528,6 +540,11 @@ Please return only tag names, do not include any other content.`
             type="default"
           >
             {{ $t('tiktokView') }}
+          </a-button>         <a-button
+            @click="editPromptAndReload"
+          >
+            <template #icon><EditOutlined /></template>
+            {{ $t('editPrompt') }}
           </a-button>
         </div>
       </div>
@@ -605,17 +622,44 @@ Please return only tag names, do not include any other content.`
             <div>
               <template v-if="geninfoStruct.prompt">
                 <br />
-                <h3>Prompt</h3>
+                <div class="section-header">
+                  <h3>Prompt</h3>
+                  <button
+                    class="edit-section-btn"
+                    @click="editPromptAndReload"
+                    :title="$t('editPrompt')"
+                  >
+                    <EditOutlined />
+                  </button>
+                </div>
                 <code v-html="spanWrap(geninfoStruct.prompt ?? '')"></code>
               </template>
               <template v-if="geninfoStruct.negativePrompt">
                 <br />
-                <h3>Negative Prompt</h3>
-                <code v-html="spanWrap(geninfoStruct.negativePrompt ?? '')"></code>
+                <div class="section-header">
+                  <h3>Negative Prompt</h3>
+                  <button
+                    class="edit-section-btn"
+                    @click="editPromptAndReload"
+                    :title="$t('editPrompt')"
+                  >
+                    <EditOutlined />
+                  </button>
+                </div>
+                <code v-html="spanWrap(geninfoStruct.negativePrompt ?? '')"></code> 
               </template>
             </div>
             <template v-if="Object.keys(geninfoStructNoPrompts).length"> <br />
-              <h3>Params</h3>
+              <div class="section-header">
+                <h3>Params</h3>
+                <button
+                  class="edit-section-btn"
+                  @click="editPromptAndReload"
+                  :title="$t('editPrompt')"
+                >
+                  <EditOutlined />
+                </button>
+              </div>
               <table>
                 <tr v-for="txt, key in geninfoStructNoPrompts" :key="key" class="gen-info-frag">
                   <td style="font-weight: 600;text-transform: capitalize;">{{ key }}</td>
@@ -629,7 +673,16 @@ Please return only tag names, do not include any other content.`
               </table>
             </template>
             <template v-if="extraJsonMetaInfo && Object.keys(extraJsonMetaInfo).length"> <br />
-              <h3>Extra Meta Info</h3>
+              <div class="section-header">
+                <h3>Extra Meta Info</h3>
+                <button
+                  class="edit-section-btn"
+                  @click="editPromptAndReload"
+                  :title="$t('editPrompt')"
+                >
+                  <EditOutlined />
+                </button>
+              </div>
               <table class="extra-meta-table">
                 <tr v-for="(val, key) in extraJsonMetaInfo" :key="key" class="gen-info-frag">
                   <td style="font-weight: 600;text-transform: capitalize;">{{ key }}</td>
@@ -728,7 +781,6 @@ Please return only tag names, do not include any other content.`
         .natural-text {
           margin: 0.5em 0;
           line-height: 1.6em;
-          text-align: justify;
           color: var(--zp-primary);
         }
 
@@ -913,6 +965,50 @@ Please return only tag names, do not include any other content.`
     align-items: center;
     gap: 4px;
     flex-wrap: nowrap;
+  }
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 6px;
+
+  h3 {
+    margin: 0;
+  }
+
+  .edit-section-btn {
+    margin: 0;
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    color: var(--zp-primary);
+    font-size: 12px;
+    line-height: 1;
+    min-width: 22px;
+    min-height: 22px;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.25);
+      color: var(--zp-luminous);
+      transform: scale(1.05);
+    }
+
+    &:active {
+      transform: scale(0.95);
+    }
+
+    :deep(.anticon) {
+      font-size: 12px;
+    }
   }
 }
 </style>

@@ -1,6 +1,29 @@
 [跳到中文](#中文)
 # English
 
+## 2026-03-15
+### 📝 Editable Generation Information
+Added the ability to edit image generation prompts and metadata directly in the UI.
+
+**Features:**
+- **Prompt Editor Modal**: Edit positive/negative prompts and generation parameters with a user-friendly interface
+- **Key-Value Editor**: Add custom metadata fields with support for both string and JSON value modes
+- **Smart Caching**: EXIF data is now cached in the database for faster subsequent retrieval
+- **Edit Tracking**: Manually edited prompts are marked and preserved separately from original file metadata
+- **Validation**: Built-in validation for required fields and unique key constraints
+- **Multi-language Support**: Full internationalization for all editing features (English, Chinese, German)
+
+**How to use:**
+1. Click the "Edit" button on any image's generation info panel
+2. Modify positive/negative prompts and other parameters in the modal
+3. Add custom metadata using the key-value editor if needed
+4. Click "Save Prompt" to update the database
+5. Edited prompts are marked and will override original file metadata
+
+**Note:** Edited prompts are stored in the database and won't modify the original image files.
+
+<img width="400" alt="Prompt editing" src="docs/imgs/prompt-edit.png" />
+
 ## 2026-02-23
 ### 🎬 Inline Video Playback
 Added inline video playback feature for video items wider than 400px.
@@ -726,6 +749,29 @@ Triggered under the same circumstances as above, there will be a button to updat
 
 
 # 中文
+
+## 2026-03-15
+### 📝 可编辑的生成信息
+新增了在界面中直接编辑图片生成提示词和元数据的功能。
+
+**功能特性：**
+- **提示词编辑器模态框**：通过友好的界面编辑正负向提示词和生成参数
+- **键值对编辑器**：添加自定义元数据字段，支持字符串和JSON值模式
+- **智能缓存**：EXIF数据现在会被缓存到数据库中，以便更快地后续检索
+- **编辑标记**：手动编辑的提示词会被标记，并与原始文件元数据分开保存
+- **数据验证**：对必填字段和唯一键约束进行内置验证
+- **多语言支持**：所有编辑功能都完全国际化（英文、中文、德语）
+
+**使用方法：**
+1. 点击任意图片生成信息面板上的"编辑"按钮
+2. 在模态框中修改正负向提示词和其他参数
+3. 如需要，使用键值对编辑器添加自定义元数据
+4. 点击"保存提示词"更新数据库
+5. 编辑过的提示词会被标记，并将覆盖原始文件元数据
+
+**注意：**编辑过的提示词存储在数据库中，不会修改原始图片文件。
+
+<img width="400" alt="Prompt editing" src="docs/imgs/prompt-edit.png" />
 
 ## 2026-02-23
 ### 🎬 视频原地播放功能
