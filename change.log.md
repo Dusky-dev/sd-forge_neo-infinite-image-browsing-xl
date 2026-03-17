@@ -26,6 +26,8 @@ Perfect for moving images from IIB to ComfyUI. When you drag an image into Comfy
 
 **Note:** This feature preserves all generation metadata in the image, enabling seamless workflow transfer to ComfyUI and other compatible tools.
 
+[Video Demo](https://github.com/user-attachments/assets/86ee87c8-887a-49ce-a3ed-07a4a2321253)
+
 ## 2026-03-15
 ### 📝 Editable Generation Information
 Added the ability to edit image generation prompts and metadata directly in the UI.
@@ -798,6 +800,8 @@ Triggered under the same circumstances as above, there will be a button to updat
 - 无需手动输入参数
 
 **注意：** 此功能保留图片中的所有生成元数据，实现与ComfyUI及其他兼容工具的无缝工作流传输。
+
+[视频演示](https://github.com/user-attachments/assets/86ee87c8-887a-49ce-a3ed-07a4a2321253)
 
 ## 2026-03-15
 ### 📝 可编辑的生成信息
