@@ -1,3 +1,13 @@
+[FORK INFO]
+
+Adds JPEG-XL(JXL) support to IIB
+
+Support for Forge Neo (only one tested)
+
+If encountering problems updating. Try a fresh install of the extension and load your latest database.
+
+[ORIGINAL REPO]
+
 > 🌍 i18n Advisory: Some translations may be incomplete or inaccurate. Pull requests are welcome for improvements!
 
 > 🌐 Try our application online at: http://39.105.110.128:0721. This is my idle 2c2g3m cloud server without CDN.
