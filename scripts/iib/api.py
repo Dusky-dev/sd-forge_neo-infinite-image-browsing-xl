@@ -1073,10 +1073,15 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                 return Response(content=content, media_type="text/html")
         return FileResponse(index_html_path)
     
-    static_dir = get_data_file_path("vue/dist") if is_exe_ver else f"{cwd}/vue/dist" 
+    static_dir = get_data_file_path("vue/dist") if is_exe_ver else f"{cwd}/vue/dist"
+    static_dir_abs = os.path.realpath(static_dir)
     @app.get(api_base + "/fe-static/{file_path:path}")
     async def serve_static_file(file_path: str):
-        file_full_path = f"{static_dir}/{file_path}"
+        # Contain the request within the static dir (CWE-22): the raw "{file_path:path}"
+        # value is not normalized by the router, so "../" segments would otherwise escape it.
+        file_full_path = os.path.realpath(f"{static_dir}/{file_path}")
+        if not file_full_path.startswith(static_dir_abs + os.sep):
+            raise HTTPException(status_code=404, detail="File not found")
         if file_path.endswith(".js"):
             with open(file_full_path, "r", encoding="utf-8") as file:
                 content = file.read().replace(DEFAULT_BASE, fe_public_path)
