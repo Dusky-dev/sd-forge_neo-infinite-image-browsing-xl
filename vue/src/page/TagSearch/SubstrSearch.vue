@@ -102,6 +102,8 @@ const indexUpdating = ref(false)
 
 
 const info = ref<DataBaseBasicInfo>()
+/** 实验功能开启但索引还没追平：给一行轻提示，避免把"搜不到新图"当成 bug */
+const showIndexStaleHint = computed(() => bg.enabled.value && !!info.value?.expired)
 
 // 标签多选，选中多个时是 AND（同时含有）
 // label 跟标签搜索页保持一致：[类型] 显示名 : 原始名
@@ -303,6 +305,7 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
       style="margin: 8px;"
       closable
     />
+    <div v-if="showIndexStaleHint" class="index-stale-hint">{{ $t('indexStaleHint') }}</div>
     <MultiSelectKeep :show="!!multiSelectedIdxs.length || g.keepMultiSelect" @clear-all-selected="onClearAllSelected"
       @select-all="onSelectAll" @reverse-select="onReverseSelect" />
     <div class="search-bar"  @keydown.stop>
@@ -437,6 +440,13 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
   </div>
 </template>
 <style scoped lang="scss">
+.index-stale-hint {
+  margin: 0 8px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8c8c8c;
+}
+
 ::v-deep {
   .float-panel {
     position: fixed;

@@ -856,6 +856,14 @@ class IndexWorker:
                     update_status=True,
                     pace=True,
                 )
+        # 扫描结束后在后台线程重算一次过期目录并缓存：
+        # 1) 让页面上的"索引可能还没更新完"提示在索引追平后马上消失；
+        # 2) 避免 /db/basic_info 在 API 线程里做上万目录的全量 stat。
+        try:
+            self._dirty_dirs(conn, force=True)
+        except Exception as exc:
+            logger.warning("[maintenance] refresh expired dirs after scan failed: %s", exc)
+
         with self._lock:
             self._last_finished_at = _now_iso()
             self._current_dir = ""
@@ -863,6 +871,10 @@ class IndexWorker:
             # 期间前端应显示「缩略图预热」而不是「后台更新索引」。
             if self._phase == "scanning":
                 self._phase = "waiting"
+            # version 语义（前端契约）：每完成一轮真正有扫描工作的后台维护 +1，
+            # 前端据此刷新标签列表 / 过期提示；缩略图预热不阻塞这次通知。
+            if dirty_dirs:
+                self._version += 1
 
         # 缩略图预热不占用 scan_lock：它不扫目录，且生成单张耗时较长，
         # 不应该让旧端点里的同步扫描等它。
@@ -873,10 +885,6 @@ class IndexWorker:
         with self._lock:
             # 本轮结束（即使上一轮 error / 本轮扫描被 pause 打断，下一轮会重新设置）。
             self._phase = "waiting"
-            # version 语义（前端契约）：每完成一轮真正有扫描工作的后台维护 +1，
-            # 前端据此刷新标签列表；空转轮、缩略图状态变化不递增。
-            if dirty_dirs:
-                self._version += 1
             indexed = self._files_indexed
             failed = self._files_failed
             dirs_done = self._dirs_done

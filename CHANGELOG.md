@@ -8,6 +8,7 @@
 - Only images indexed after the feature was enabled get pre-generated thumbnails, with a 2 GB soft cap on the shared thumbnail cache; older images keep the existing on-demand path.
 - `POST /db/update_image_data` no longer blocks the event loop (it runs in the threadpool), `basic_info`/`expired_dirs` use a 15 s cache instead of stat-ing every folder on each page mount, and the new `GET /db/index/status` + `POST /db/index/run` endpoints expose progress and allow an immediate run.
 - Fixed while in there: the folder scan watermark was written after listing (files added during a scan could be missed forever), re-indexing a changed image no longer loses custom tags / manually edited metadata, `image.path` upserts keep the row id, `Tag.get_or_create` no longer churns tag ids, the DB uses a busy timeout with retries, the auto-tag matcher no longer shares a connection across threads, and `--update_image_index` now scans expired folders instead of only the roots.
+- While the feature is on but the index is still catching up, the search pages show a single muted line ("The index may still be catching up; the newest images may not appear in results yet.") instead of any blocking prompt; it disappears automatically once the round finishes.
 
 ## 2026-10-09
 ### 🔒 Sidecar lifecycle: no more orphans, graceful shutdown, auto restart
@@ -906,6 +907,7 @@ Triggered under the same circumstances as above, there will be a button to updat
 - 只预热"开启功能之后新加入索引"的图片缩略图，共享缩略图缓存有 2GB 软上限；老图片仍走原来的按需生成。
 - `POST /db/update_image_data` 不再阻塞事件循环（改到线程池执行）；`basic_info`/`expired_dirs` 用 15 秒缓存，页面挂载时不再对每个目录做 stat；新增 `GET /db/index/status`、`POST /db/index/run` 两个端点用于看进度和立即触发。
 - 顺带修复：扫描水位写在列目录之后（扫描期间新增的文件可能永久漏掉）、重扫变更图片会丢自定义标签/手动编辑信息、`image.path` 改为 upsert 保留行 id、`Tag.get_or_create` 不再更换 tag id、数据库加 busy timeout 与重试、自动标签匹配器不再跨线程共享连接、`--update_image_index` 改为扫描过期目录而不是只扫根目录。
+- 功能开启但索引还在追平时，搜索页只显示一行灰色提示（“索引可能还没更新完，新图片可能暂未出现在结果里”），不阻塞任何操作，追平后自动消失。
 
 ## 2026-10-09
 ### 🔒 后端进程生命周期：不再有孤儿、优雅退出、崩溃自动重启

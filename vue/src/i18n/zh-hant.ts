@@ -101,6 +101,7 @@ export const zhHant: Partial<IIBI18nMap> = {
   autoUpdateIndex: '自動更新索引',
   autoUpdateIndexDesc: '當檢測到索引過期時自動更新（頁面返回時）。關閉後將顯示提示，允許手動更新',
   indexExpiredManualUpdate: '索引已過期，可點擊更新按鈕手動更新',
+  indexStaleHint: '索引可能還沒更新完，新圖片可能暫未出現在結果裡',
   autoUpdateFeatureTip: '💡 提示：為了避免頻繁更新打斷您的心流，您可以在全局設置中關閉「自動更新索引」。關閉後仍可搜索（基於已過期的索引），需要時再手動更新即可。',
   gotIt: '知道了',
   pollInterval: '輪詢間隔',

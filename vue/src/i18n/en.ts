@@ -100,6 +100,7 @@ export const en: IIBI18nMap = {
   autoUpdateIndex: 'Auto Update Index',
   autoUpdateIndexDesc: 'Automatically update when index is expired (on page return). When disabled, a prompt will be shown for manual update',
   indexExpiredManualUpdate: 'Index expired, click update button to manually update',
+  indexStaleHint: 'The index may still be catching up; the newest images may not appear in results yet.',
   autoUpdateFeatureTip: '💡 Tip: To avoid frequent index updates interrupting your workflow, you can disable "Auto Update Index" in global settings. When disabled, you can still search (based on the stale index), and manually update when needed.',
   gotIt: 'Got it',
   pollInterval: 'Poll Interval',

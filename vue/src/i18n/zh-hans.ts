@@ -98,6 +98,7 @@ export const zhHans = {
   autoUpdateIndex: '自动更新索引',
   autoUpdateIndexDesc: '当检测到索引过期时自动更新（页面返回时）。关闭后将显示提示，允许手动更新',
   indexExpiredManualUpdate: '索引已过期，可点击更新按钮手动更新',
+  indexStaleHint: '索引可能还没更新完，新图片可能暂未出现在结果里',
   autoUpdateFeatureTip: '💡 提示：为了避免频繁更新打断您的心流，您可以在全局设置中关闭"自动更新索引"。关闭后仍可搜索（基于已过期的索引），需要时再手动更新即可。',
   gotIt: '知道了',
   pollRefresh: '轮询刷新',

@@ -21,6 +21,7 @@ export const de: Partial<IIBI18nMap> = {
   autoUpdateIndex: 'Index automatisch aktualisieren',
   autoUpdateIndexDesc: 'Index automatisch aktualisieren, wenn er veraltet ist (beim Zurückkehren zur Seite). Wenn deaktiviert, wird eine Aufforderung zur manuellen Aktualisierung angezeigt',
   indexExpiredManualUpdate: 'Index veraltet, bitte auf die Schaltfläche "Index aktualisieren" klicken, um manuell zu aktualisieren',
+  indexStaleHint: 'Der Index wird möglicherweise noch aktualisiert; neueste Bilder erscheinen eventuell noch nicht in den Ergebnissen.',
   autoUpdateFeatureTip: '💡 Tipp: Um häufige Index-Updates zu vermeiden, die Ihren Workflow unterbrechen, können Sie "Index automatisch aktualisieren" in den globalen Einstellungen deaktivieren. Wenn deaktiviert, können Sie immer noch suchen (basierend auf dem veralteten Index) und bei Bedarf manuell aktualisieren.',
   gotIt: 'Verstanden',
   faq: 'FAQ',

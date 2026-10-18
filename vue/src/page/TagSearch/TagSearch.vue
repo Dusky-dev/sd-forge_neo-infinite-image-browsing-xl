@@ -41,6 +41,8 @@ const info = ref<DataBaseBasicInfo>()
 const bg = useBackgroundMaintenance()
 /** 实验功能开启且后台未报错时，过期交给后台静默处理，不再显示黄色提示/手动更新按钮 */
 const hideExpiredAlert = computed(() => bg.enabled.value && !bg.backgroundFailed.value)
+/** 实验功能开启但索引还没追平：给一行轻提示，避免把"搜不到新图"当成 bug */
+const showIndexStaleHint = computed(() => bg.enabled.value && !!info.value?.expired)
 const showHistoryRecord = ref(false)
 const matchIds = ref<MatchImageByTagsReq>({ and_tags: [], or_tags: [], not_tags: [], folder_paths_str: props.searchScope })
 const tags = computed(() =>
@@ -294,6 +296,7 @@ const tagIdsToString = (tagIds: TagId[]) => {
         style="margin-bottom: 8px;"
         closable
       />
+      <div v-if="showIndexStaleHint" class="index-stale-hint">{{ $t('indexStaleHint') }}</div>
       <div>
         <div class="search-bar">
           <div class="form-name">{{ $t('exactMatch') }}</div>
@@ -388,6 +391,13 @@ const tagIdsToString = (tagIds: TagId[]) => {
   </div>
 </template>
 <style scoped lang="scss">
+.index-stale-hint {
+  margin: 0 4px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8c8c8c;
+}
+
 .spin-container {
   text-align: center;
   background: rgba(0, 0, 0, 0.05);
