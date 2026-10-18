@@ -287,7 +287,7 @@ const tagIdsToString = (tagIds: TagId[]) => {
         </template>
       </a-alert>
       <a-alert
-        v-if="info.expired && !global.autoUpdateIndex && !hideExpiredAlert"
+        v-if="info.expired && !global.autoUpdateIndex && !bg.enabled.value"
         type="warning"
         show-icon
         :message="$t('indexExpiredManualUpdate')"
@@ -307,7 +307,7 @@ const tagIdsToString = (tagIds: TagId[]) => {
         $t('search') }}
             </AButton>
             <AButton @click="onUpdateBtnClick" :loading="indexUpdating"
-              v-if="info.expired && !global.autoUpdateIndex && !hideExpiredAlert"
+              v-if="info.expired && !global.autoUpdateIndex && !bg.enabled.value"
               style="margin-left: 8px;">
               {{ $t('UpdateIndex') }}
             </AButton>

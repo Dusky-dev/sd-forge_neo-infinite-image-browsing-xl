@@ -296,7 +296,7 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
       </template>
     </a-alert>
     <a-alert
-      v-if="info && info.expired && !g.autoUpdateIndex && !hideExpiredAlert"
+      v-if="info && info.expired && !g.autoUpdateIndex && !bg.enabled.value"
       type="warning"
       show-icon
       :message="$t('indexExpiredManualUpdate')"
@@ -324,7 +324,7 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
            >{{ $t('search') }}
         </AButton>
         <AButton @click="onUpdateBtnClick" :loading="indexUpdating"
-          v-if="info && info.expired && !g.autoUpdateIndex && !hideExpiredAlert"
+          v-if="info && info.expired && !g.autoUpdateIndex && !bg.enabled.value"
           style="margin-left: 8px;">
           {{ $t('UpdateIndex') }}
         </AButton>
