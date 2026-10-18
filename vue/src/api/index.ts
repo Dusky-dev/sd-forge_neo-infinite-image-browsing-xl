@@ -12,6 +12,16 @@ import { refreshTauriConf, tauriConf } from '@/util/tauriAppConf'
 import { Dict, isSync } from '@/util'
 import { FileNodeInfo } from './files'
 
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    /**
+     * 静默请求：失败时不弹全局 message.error、也不触发密钥弹窗，由调用方自行处理。
+     * 用于后台轮询类接口（如索引状态），避免服务端暂时不可用时刷屏报错。
+     */
+    silent?: boolean
+  }
+}
+
 export const apiBase = computed(() =>
   tauriConf.value
     ? `http://127.0.0.1:${tauriConf.value.port}/infinite_image_browsing`
@@ -123,6 +133,10 @@ const addInterceptor = (axiosInst: AxiosInstance) => {
     (resp) => resp,
     async (err) => {
       if (isAxiosError(err)) {
+        if (err.config?.silent) {
+          // 静默请求：不弹错误提示、不触发密钥流程，直接把错误抛给调用方
+          throw err
+        }
         if (err.response?.status === 401 && err.response?.data?.detail?.type === 'secret_verification_failed') {
           const key = await promptServerKeyOnce()
           if (!key) {
@@ -191,7 +205,7 @@ export interface GlobalConf {
   enable_access_control: boolean
   launch_mode: 'server' | 'sd'
   export_fe_fn: boolean
-  app_fe_setting: Record<'global' | 'fullscreen_layout' | 'auto_tag_rules' | 'startup_page_layout' | `workspace_snapshot_${string}`, any>
+  app_fe_setting: Record<'global' | 'fullscreen_layout' | 'auto_tag_rules' | 'startup_page_layout' | 'background_maintenance' | `workspace_snapshot_${string}`, any>
   is_readonly: boolean
 }
 

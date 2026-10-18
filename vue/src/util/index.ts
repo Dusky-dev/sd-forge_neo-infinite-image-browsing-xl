@@ -109,6 +109,8 @@ export const { useEventListen: useGlobalEventListen, eventEmitter: globalEvents 
     refreshFileView(args?: { paths?: string[] }): void
     openPromptEditor(data: { file: { name: string; fullpath: string }}): void
     promptEditorUpdated(): void
+    /** 后台静默维护完成一轮索引更新（status.version 变化） */
+    backgroundMaintenanceUpdated(): void
   }>()
 
 type AsyncFunction<T> = (...args: any[]) => Promise<T>
