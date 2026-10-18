@@ -6,6 +6,9 @@ import { useWorkspeaceSnapshot } from './store/useWorkspeaceSnapshot'
 import { getQuickMovePaths } from '@/page/taskRecord/autoComplete'
 import SplitViewTab from '@/page/SplitViewTab/SplitViewTab.vue'
 import OrganizeJobsPanel from '@/components/OrganizeJobsPanel.vue'
+import BackgroundMaintenanceModal from '@/components/BackgroundMaintenanceModal.vue'
+import IndexStatusIndicator from '@/components/IndexStatusIndicator.vue'
+import { initBackgroundMaintenance } from '@/composables/useBackgroundMaintenance'
 import OrganizePreview from '@/page/OrganizeFiles/OrganizePreview.vue'
 import SmartOrganizeConfigModal from '@/components/SmartOrganizeConfigModal.vue'
 import PromptEditorModal from '@/components/PromptEditorModal.vue'
@@ -258,7 +261,8 @@ onMounted(async () => {
     openModal()
   }
   globalEvents.emit('updateGlobalSetting')
-
+  // 后台静默维护（实验性）：全局初始化配置 + 状态轮询（内部等后端就绪，失败静默）
+  void initBackgroundMaintenance()
 })
 </script>
 
@@ -276,6 +280,10 @@ onMounted(async () => {
 
   <!-- Organize Jobs Progress Panel -->
   <OrganizeJobsPanel @open-preview="handleOpenOrganizePreview" />
+
+  <!-- Background silent maintenance: 全局轻量状态胶囊 + 共用的设置 modal -->
+  <IndexStatusIndicator />
+  <BackgroundMaintenanceModal />
 
   <!-- Organize Preview Modal -->
   <a-modal

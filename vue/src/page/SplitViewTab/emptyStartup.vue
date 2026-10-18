@@ -18,6 +18,7 @@ import { message } from 'ant-design-vue'
 import { useSettingSync } from '@/util'
 import { orderStartupItems, startupBlockIds, useStartupLayout, type StartupBlockId } from '@/util/startupLayout'
 import Sortable from 'sortablejs'
+import BackgroundMaintenanceBanner from '@/components/BackgroundMaintenanceBanner.vue'
 
 const global = useGlobalStore()
 const imgsli = useImgSliStore()
@@ -346,6 +347,9 @@ const modes = computed(() => {
         </div>
       </div>
     </a-modal>
+
+    <!-- 实验性功能：后台静默更新索引/缩略图（默认关闭，开启后自动隐藏） -->
+    <BackgroundMaintenanceBanner />
 
     <a-alert show-icon v-if="global.conf?.enable_access_control && !global.dontShowAgain">
       <template #message>

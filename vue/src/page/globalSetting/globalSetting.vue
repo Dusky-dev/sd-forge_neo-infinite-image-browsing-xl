@@ -18,9 +18,16 @@ import { message } from 'ant-design-vue'
 import { throttle, debounce } from 'lodash-es'
 import { useLocalStorage } from '@vueuse/core'
 import { prefix } from '@/util/const'
+import { useBackgroundMaintenance } from '@/composables/useBackgroundMaintenance'
 
 const globalStore = useGlobalStore()
 const wsStore = useWorkspeaceSnapshot()
+
+// 后台静默维护（实验性）：入口打开与启动页 banner 共用的 modal
+const {
+  settings: backgroundMaintenanceSettings,
+  openModal: openBackgroundMaintenanceModal
+} = useBackgroundMaintenance()
 
 const langChanged = ref(false)
 const reload = async () => {
@@ -189,6 +196,12 @@ const presetShortcutGroups = computed(() => ([
       <a-form-item :label="$t('autoUpdateIndex')">
         <a-switch v-model:checked="globalStore.autoUpdateIndex" />
         <span style="margin-left: 8px;color: #666;">{{ t('autoUpdateIndexDesc') }}</span>
+      </a-form-item>
+      <a-form-item :label="$t('backgroundMaintenance')">
+        <a-button @click="openBackgroundMaintenanceModal">{{ $t('backgroundMaintenanceOpen') }}</a-button>
+        <span style="margin-left: 8px;color: #666;">
+          {{ backgroundMaintenanceSettings.index ? $t('backgroundMaintenanceEnabled') : $t('backgroundMaintenanceDisabled') }}
+        </span>
       </a-form-item>
 
       <h2>{{ t('autoRefresh') }}</h2>

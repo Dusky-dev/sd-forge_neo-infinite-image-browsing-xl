@@ -4,10 +4,12 @@ import random
 from sqlite3 import Connection, connect
 from enum import Enum
 import sqlite3
+import time
 from typing import Dict, List, Optional, TypedDict, Union
 from scripts.iib.tool import (
     cwd,
     get_modified_date,
+    get_formatted_date,
     human_readable_size,
     tags_translate,
     is_dev,
@@ -93,6 +95,8 @@ class DataBase:
     def init(clz):
         # 创建连接并打开数据库
         conn = connect(clz.get_db_file_path())
+        # 后台 worker 与请求线程可能同时写库：遇到锁时最多等待 5s 而不是立刻抛错
+        conn.execute("PRAGMA busy_timeout=5000")
 
         # # 禁用 WAL 模式，使用传统的 DELETE 日志模式
         # conn.execute("PRAGMA journal_mode=DELETE")
@@ -124,6 +128,27 @@ class DataBase:
         return conn
 
 
+def commit_with_retry(conn: Connection, retries: int = 5) -> None:
+    """Commit, retrying transient SQLite lock/busy errors (0.2s * 2^n backoff).
+
+    后台索引线程和请求线程各持有一个连接，同时写入时 commit 可能遇到
+    "database is locked"。busy_timeout 之外再加一层重试，避免整批扫描失败。
+    """
+    attempts = max(1, int(retries))
+    delay = 0.2
+    for attempt in range(attempts):
+        try:
+            conn.commit()
+            return
+        except sqlite3.OperationalError as e:
+            message = str(e).lower()
+            transient = "locked" in message or "busy" in message
+            if not transient or attempt >= attempts - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
+
+
 class Image:
     def __init__(self, path, exif=None, size=0, date="", exif_edited=False, id=None):
         self.path = path
@@ -147,12 +172,30 @@ class Image:
         }
 
     def save(self, conn):
+        """Insert or update this image by path.
+
+        Upsert instead of INSERT OR REPLACE so re-indexing an existing file keeps
+        its row id (image_tag / image_embedding references stay valid) and keeps
+        a manually edited exif (exif_edited=1) intact.
+        """
         with closing(conn.cursor()) as cur:
             cur.execute(
-                "INSERT OR REPLACE INTO image (path, exif, exif_edited, size, date) VALUES (?, ?, ?, ?, ?)",
+                """INSERT INTO image (path, exif, exif_edited, size, date) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    exif = excluded.exif,
+                    size = excluded.size,
+                    date = excluded.date
+                """,
                 (self.path, self.exif, int(self.exif_edited), self.size, self.date),
             )
-            self.id = cur.lastrowid
+            # lastrowid 对 upsert 不可靠：回读真实 id / exif_edited（冲突行保留原 exif_edited）
+            cur.execute(
+                "SELECT id, exif_edited FROM image WHERE path = ?", (self.path,)
+            )
+            row = cur.fetchone()
+            if row is not None:
+                self.id = row[0]
+                self.exif_edited = bool(row[1])
 
     def update_exif(self, conn: Connection, exif: str, mark_edited: bool = True):
         """更新图片的 exif 信息并标记为已编辑"""
@@ -876,24 +919,40 @@ class Tag:
     @classmethod
     def get_or_create(cls, conn: Connection, name: str, type: str):
         assert name and type
-        
+
         # Validate tag name
         error_name = cls.validate_tag_name(name)
         if error_name:
             # Return None for invalid tag names
             return None
-        
+
         with closing(conn.cursor()) as cur:
+            # 不要用 REPLACE：UNIQUE(name,type) 上的 REPLACE 会删旧行换新 id，
+            # 导致 image_tag / tag 的 count 出现孤儿引用。DO NOTHING 保持 id 稳定。
+            cur.execute(
+                """INSERT INTO tag (name, score, type, count, color) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(name, type) DO NOTHING
+                """,
+                (name, 0, type, 0, ""),
+            )
             cur.execute(
                 "SELECT tag.* FROM tag WHERE name = ? and type = ?", (name, type)
             )
             row = cur.fetchone()
             if row is None:
-                tag = cls(name=name, score=0, type=type)
-                tag.save(conn)
-                return tag
-            else:
-                return cls.from_row(row)
+                return None
+            return cls.from_row(row)
+
+    @classmethod
+    def add_count(cls, conn: Connection, tag_id: int, increment: int) -> None:
+        """原子增加标签计数（在调用方事务内执行，避免整行 UPDATE OR REPLACE 的竞态）。"""
+        if not tag_id or not increment:
+            return
+        with closing(conn.cursor()) as cur:
+            cur.execute(
+                "UPDATE tag SET count = count + ? WHERE id = ?",
+                (int(increment), int(tag_id)),
+            )
 
     @classmethod
     def from_row(cls, row: tuple):
@@ -1196,18 +1255,26 @@ class Folder:
     @classmethod
     def update_modified_date_or_create(cls, conn: Connection, folder_path: str):
         folder_path = os.path.normpath(folder_path)
+        cls.set_modified_date(conn, folder_path, get_modified_date(folder_path))
+
+    @classmethod
+    def set_modified_date(
+        cls, conn: Connection, folder_path: str, modified_date: str
+    ):
+        """写入扫描水位。modified_date 由调用方提供，避免扫描结束后重新 stat 目录。"""
+        folder_path = os.path.normpath(folder_path)
         with closing(conn.cursor()) as cur:
-            cur.execute("SELECT * FROM folders WHERE path = ?", (folder_path,))
+            cur.execute("SELECT id FROM folders WHERE path = ?", (folder_path,))
             row = cur.fetchone()
             if row:
                 cur.execute(
                     "UPDATE folders SET modified_date = ? WHERE path = ?",
-                    (get_modified_date(folder_path), folder_path),
+                    (modified_date, folder_path),
                 )
             else:
                 cur.execute(
                     "INSERT INTO folders (path, modified_date) VALUES (?, ?)",
-                    (folder_path, get_modified_date(folder_path)),
+                    (folder_path, modified_date),
                 )
 
     @classmethod
@@ -1222,10 +1289,12 @@ class Folder:
                     dirs.append(ep.path)
             for row in result_set:
                 folder_path = row[1]
-                if (
-                    os.path.exists(folder_path)
-                    and get_modified_date(folder_path) != row[2]
-                ):
+                # 一次 os.stat 同时完成存在性和 mtime 检查（原先 exists + getmtime 两次 stat）
+                try:
+                    folder_stat = os.stat(folder_path)
+                except OSError:
+                    continue
+                if get_formatted_date(folder_stat.st_mtime) != row[2]:
                     dirs.append(folder_path)
             return unique_by(dirs, os.path.normpath)
 
