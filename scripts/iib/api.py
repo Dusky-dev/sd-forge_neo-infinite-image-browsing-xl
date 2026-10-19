@@ -138,6 +138,22 @@ class RequestTracker:
 
 request_tracker = RequestTracker()
 
+
+class _TrackRequestsASGI:
+    """Track HTTP requests on routes added after a host app has already started."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        request_tracker.begin()
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            request_tracker.end()
+
 # AI 配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -213,15 +229,19 @@ _timeline_mem = {"first_request_logged": False}
 def infinite_image_browsing_api(app: FastAPI, **kwargs):
     tlog("api_build_start")
 
-    # 极轻量的全量请求追踪中间件（始终启用）：只维护最近请求时间与 inflight 计数，
-    # 供后台 worker 的 Governor 在前台有操作时让路。不加日志、不做 IO。
-    @app.middleware("http")
-    async def track_requests(request: Request, call_next):
-        request_tracker.begin()
-        try:
-            return await call_next(request)
-        finally:
-            request_tracker.end()
+    # Forge Neo calls this after the host app's middleware stack is initialized.
+    # Starlette rejects app.middleware()/add_middleware() at that point.
+    # Track only the new IIB routes in that case, without mutating the host stack.
+    host_already_started = app.middleware_stack is not None
+    previous_route_ids = {id(route) for route in app.router.routes} if host_already_started else set()
+    if not host_already_started:
+        @app.middleware("http")
+        async def track_requests(request: Request, call_next):
+            request_tracker.begin()
+            try:
+                return await call_next(request)
+            finally:
+                request_tracker.end()
 
     # 每天首次启动要整库备份（几百 MB）。同步执行会卡在 uvicorn 绑定端口之前，而桌面端
     # webview 不会等后端就绪就发请求；即使放到后台线程，冷启动时也会和解压抢磁盘 I/O。
@@ -1845,6 +1865,16 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         except Exception as e:
             logger.error("resolve scan dirs for maintenance worker failed: %s", e)
             return []
+
+    # In an already-running host, ASGI-wrap only routes added by this extension.
+    # This keeps the maintenance governor responsive to IIB foreground requests.
+    if host_already_started:
+        tracked_routes = 0
+        for route in app.router.routes:
+            if id(route) not in previous_route_ids and hasattr(route, "app"):
+                route.app = _TrackRequestsASGI(route.app)
+                tracked_routes += 1
+        logger.info("IIB route-level request tracking enabled for %s routes", tracked_routes)
 
     init_worker(_maintenance_scan_dirs)
     tlog("maintenance_worker_ready")
