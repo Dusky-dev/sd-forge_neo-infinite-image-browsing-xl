@@ -1,11 +1,11 @@
 <script lang="ts" setup>
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import fileItemCell from '@/components/FileItem.vue'
 import '@zanllp/vue-virtual-scroller/dist/vue-virtual-scroller.css'
 // @ts-ignore
 import { RecycleScroller } from '@zanllp/vue-virtual-scroller'
 import { toImageUrl } from '@/util/file'
-import { getDbBasicInfo, getExpiredDirs, getImagesBySubstr, updateImageData, type DataBaseBasicInfo, SearchBySubstrReq } from '@/api/db'
+import { getDbBasicInfo, getExpiredDirs, getImagesBySubstr, updateImageData, type DataBaseBasicInfo, type Tag, type TagId, SearchBySubstrReq } from '@/api/db'
 import { copy2clipboardI18n,  makeAsyncFunctionSingle, useGlobalEventListen } from '@/util'
 import fullScreenContextMenu from '@/page/fileTransfer/fullScreenContextMenu.vue'
 import { LeftCircleOutlined, RightCircleOutlined, regex, AimOutlined } from '@/icon'
@@ -21,7 +21,12 @@ import { fuzzySearchHistory, FuzzySearchHistoryRecord } from '@/store/searchHist
 import { openTiktokViewWithFiles } from '@/util/tiktokHelper'
 import { useTagStore } from '@/store/useTagStore'
 import { useLocalStorage } from '@vueuse/core'
+import { SearchSelect, type SearchSelectConv } from 'vue3-ts-util'
+import { useBackgroundMaintenance } from '@/composables/useBackgroundMaintenance'
 const tagStore = useTagStore()
+const bg = useBackgroundMaintenance()
+/** 实验功能开启且后台未报错时，过期交给后台静默处理，不再显示黄色提示/手动更新按钮 */
+const hideExpiredAlert = computed(() => bg.enabled.value && !bg.backgroundFailed.value)
 const showAutoUpdateFeatureTip = useLocalStorage('iib_auto_update_feature_tip_shown', false)
 const props = defineProps<{
   tabIdx: number
@@ -45,6 +50,7 @@ const folder_paths_str = ref(props.searchScope ?? '')
 const showHistoryRecord = ref(false)
 const searchCount = ref(0)
 const mediaType = ref('all')
+const andTags = ref<TagId[]>([])
 const iter = createImageSearchIter(cursor => {
   const req: SearchBySubstrReq = {
     cursor,
@@ -52,7 +58,8 @@ const iter = createImageSearchIter(cursor => {
     surstr: !isRegex.value ? substr.value : '',
     path_only: pathOnly.value,
     folder_paths: (folder_paths_str.value ?? '').split(/,|\n/).map(v => v.trim()).filter(v => v),
-    media_type: mediaType.value
+    media_type: mediaType.value,
+    and_tags: andTags.value
   }
   return getImagesBySubstr(req)
 })
@@ -88,13 +95,56 @@ const {
   getGenDiffWatchDep
 } = useImageSearch(iter)
 
+/** 只有搜索请求自身在跑时才锁搜索区 / 转圈，后台更新索引不再影响它 */
+const searching = computed(() => !!iter.loading)
+/** 手动触发索引更新中的状态（与搜索结果 loading 解耦） */
+const indexUpdating = ref(false)
+
 
 const info = ref<DataBaseBasicInfo>()
+/** 实验功能开启但索引还没追平：给一行轻提示，避免把"搜不到新图"当成 bug */
+const showIndexStaleHint = computed(() => bg.enabled.value && !!info.value?.expired)
+
+// 标签多选，选中多个时是 AND（同时含有）
+// label 跟标签搜索页保持一致：[类型] 显示名 : 原始名
+// pos/size 动辄几十万条，直接在前端过滤掉，选择器里只留常用类型
+const EXCLUDED_TAG_TYPES = ['pos', 'size']
+
+// 跟标签搜索页的 toTagDisplayName 保持一致
+const toTagDisplayName = (tag: Tag, withType = false) =>
+  (withType ? `[${tag.type}] ` : '') + (tag.display_name ? `${tag.display_name} : ${tag.name}` : tag.name)
+
+const tagMap = computed(() => new Map((info.value?.tags ?? []).map(tag => [tag.id, tag])))
+
+const tags = computed(() =>
+  (info.value?.tags ?? [])
+    .filter(tag => !EXCLUDED_TAG_TYPES.includes(tag.type))
+    .sort((a, b) => {
+      // custom 的排最前，其余按 count 降序
+      const customDiff = (b.type === 'custom' ? 1 : 0) - (a.type === 'custom' ? 1 : 0)
+      return customDiff || (b.count ?? 0) - (a.count ?? 0)
+    })
+)
+
+const tagConv: SearchSelectConv<Tag> = {
+  value: (v: Tag) => v.id,
+  text: (v: Tag) => toTagDisplayName(v),
+  optionText: (v: Tag) => toTagDisplayName(v, true)
+}
+
+const tagNameOf = (id: TagId) => {
+  const tag = tagMap.value.get(id)
+  return tag ? toTagDisplayName(tag, true) : String(id)
+}
+const tagIdsToString = (ids?: TagId[]) => (ids ?? []).map(tagNameOf).join(', ')
 
 onMounted(async () => {
+  // 先确保实验功能配置已加载，避免 mount 时读到默认值导致误走阻塞式更新
+  await bg.loadSettings().catch(() => undefined)
   info.value = await getDbBasicInfo()
   if (info.value.img_count && info.value.expired) {
-    if (g.autoUpdateIndex) {
+    // 实验功能开启时交给后台 worker，mount 不再阻塞等待索引更新
+    if (g.autoUpdateIndex && !bg.enabled.value) {
       await onUpdateBtnClick()
     }
   }
@@ -131,15 +181,27 @@ watch(
 )
 
 
-const onUpdateBtnClick = makeAsyncFunctionSingle(
-  () =>
-    queue.pushAction(async () => {
-      await updateImageData()
-      info.value = await getDbBasicInfo()
-      tagStore.tagMap.clear()
-      return info.value
-    }).res
-)
+const onUpdateBtnClick = makeAsyncFunctionSingle(async () => {
+  indexUpdating.value = true
+  try {
+    await updateImageData()
+    info.value = await getDbBasicInfo()
+    tagStore.tagMap.clear()
+    return info.value
+  } finally {
+    indexUpdating.value = false
+  }
+})
+
+// 后台静默维护完成一轮索引更新后，重新拉取标签列表（不刷新已打开的匹配结果）
+useGlobalEventListen('backgroundMaintenanceUpdated', async () => {
+  try {
+    info.value = await getDbBasicInfo()
+    tagStore.tagMap.clear()
+  } catch (error) {
+    // 后台刷新标签失败不打扰用户，下次轮询/进入页面会再拉
+  }
+})
 
 
 const reuse = (rec: FuzzySearchHistoryRecord & { id: string; time: string }) => {
@@ -147,6 +209,7 @@ const reuse = (rec: FuzzySearchHistoryRecord & { id: string; time: string }) => 
   folder_paths_str.value = rec.folder_paths_str
   isRegex.value = rec.isRegex
   mediaType.value = rec.mediaType || 'all'
+  andTags.value = rec.and_tags ?? []
   showHistoryRecord.value = false
   query()
 }
@@ -157,7 +220,8 @@ const query = async () => {
     substr: substr.value,
     folder_paths_str: folder_paths_str.value,
     isRegex: isRegex.value,
-    mediaType: mediaType.value
+    mediaType: mediaType.value,
+    and_tags: andTags.value
   })
   await iter.reset({ refetch: true })
   await nextTick()
@@ -203,6 +267,10 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
             <a-col :span="4">{{ $t('mediaType') }}:</a-col>
             <a-col :span="20">{{ record.mediaType }}</a-col>
           </a-row>
+          <a-row v-if="record.and_tags?.length">
+            <a-col :span="4">{{ $t('tags') }}:</a-col>
+            <a-col :span="20">{{ tagIdsToString(record.and_tags) }} (AND)</a-col>
+          </a-row>
           <a-row>
             <a-col :span="4">{{ $t('time') }}:</a-col>
             <a-col :span="20">{{ record.time }}</a-col>
@@ -215,7 +283,7 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
   </a-modal>
   <div class="container" ref="stackViewEl">
     <a-alert
-      v-if="!showAutoUpdateFeatureTip"
+      v-if="!showAutoUpdateFeatureTip && !hideExpiredAlert"
       type="info"
       show-icon
       :message="$t('autoUpdateFeatureTip')"
@@ -230,19 +298,20 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
       </template>
     </a-alert>
     <a-alert
-      v-if="info && info.expired && !g.autoUpdateIndex"
+      v-if="info && info.expired && !g.autoUpdateIndex && !bg.enabled.value"
       type="warning"
       show-icon
       :message="$t('indexExpiredManualUpdate')"
       style="margin: 8px;"
       closable
     />
+    <div v-if="showIndexStaleHint" class="index-stale-hint">{{ $t('indexStaleHint') }}</div>
     <MultiSelectKeep :show="!!multiSelectedIdxs.length || g.keepMultiSelect" @clear-all-selected="onClearAllSelected"
       @select-all="onSelectAll" @reverse-select="onReverseSelect" />
     <div class="search-bar"  @keydown.stop>
       <a-input v-model:value="substr" :placeholder="$t('fuzzy-search-placeholder') + ' ' + $t('regexSearchEnabledHint')"
-        :disabled="!queue.isIdle" @keydown.enter="query" allow-clear />
-      <ASelect v-model:value="mediaType" style="width: 100px; margin: 0 4px;" :disabled="!queue.isIdle">
+        :disabled="searching" @keydown.enter="query" allow-clear />
+      <ASelect v-model:value="mediaType" style="width: 100px; margin: 0 4px;" :disabled="searching">
         <ASelectOption value="all">{{ $t('all') }}</ASelectOption>
         <ASelectOption value="image">{{ $t('image') }}</ASelectOption>
         <ASelectOption value="video">{{ $t('video') }}</ASelectOption>
@@ -251,20 +320,31 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
         :title="$t('pathOnly')"><AimOutlined /></div>
       <div class="regex-icon" :class="{ selected: isRegex }" @keydown.stop @click="onRegexpClick"
         title="Use Regular Expression"> <img :src="regex"></div>
-      <AButton @click="onUpdateBtnClick" :loading="!queue.isIdle" type="primary" v-if="info && !info.img_count">
+      <AButton @click="onUpdateBtnClick" :loading="indexUpdating" type="primary" v-if="info && !info.img_count">
         {{ $t('generateIndexHint') }}</AButton>
       <template v-else>
-        <AButton type="primary" @click="query" :loading="!queue.isIdle || iter.loading"
+        <AButton type="primary" @click="query" :loading="searching"
            >{{ $t('search') }}
         </AButton>
-        <AButton @click="onUpdateBtnClick" :loading="!queue.isIdle"
-          v-if="info && info.expired && !g.autoUpdateIndex"
+        <AButton @click="onUpdateBtnClick" :loading="indexUpdating"
+          v-if="info && info.expired && !g.autoUpdateIndex && !bg.enabled.value"
           style="margin-left: 8px;">
           {{ $t('UpdateIndex') }}
         </AButton>
       </template>
     </div>
     <div class="search-bar">
+      <SearchSelect
+        :conv="tagConv"
+        mode="multiple"
+        :options="tags"
+        v-model:value="andTags"
+        :placeholder="$t('tagFilterAnd')"
+        :disabled="searching || !tags.length"
+        :max-tag-count="2"
+        allow-clear
+        style="width: 300px; margin: 0 4px 0 0; flex-shrink: 0;"
+      />
       <div class="form-name">{{ $t('searchScope') }}</div>
       <ATextarea :auto-size="{ maxRows: 8 }" v-model:value="folder_paths_str"
         :placeholder="$t('specifiedSearchFolder')" />
@@ -277,7 +357,7 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
       <TipsCarousel :interval="10000" />
     </div>
     </div>
-    <ASpin size="large" :spinning="!queue.isIdle">
+    <ASpin size="large" :spinning="searching">
       <AModal v-model:visible="showGenInfo" width="70vw" mask-closable @ok="showGenInfo = false">
         <template #cancelText />
         <ASkeleton active :loading="!genInfoQueue.isIdle">
@@ -316,6 +396,10 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
               <a-row v-if="record.mediaType">
                 <a-col :span="4">{{ $t('mediaType') }}:</a-col>
                 <a-col :span="20">{{ record.mediaType }}</a-col>
+              </a-row>
+              <a-row v-if="record.and_tags?.length">
+                <a-col :span="4">{{ $t('tags') }}:</a-col>
+                <a-col :span="20">{{ tagIdsToString(record.and_tags) }} (AND)</a-col>
               </a-row>
               <a-row>
                 <a-col :span="4">{{ $t('time') }}:</a-col>
@@ -356,6 +440,13 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
   </div>
 </template>
 <style scoped lang="scss">
+.index-stale-hint {
+  margin: 0 8px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8c8c8c;
+}
+
 ::v-deep {
   .float-panel {
     position: fixed;

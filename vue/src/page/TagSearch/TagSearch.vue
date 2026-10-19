@@ -27,6 +27,7 @@ import { tagSearchHistory } from '@/store/searchHistory'
 import { useTagStore } from '@/store/useTagStore'
 import { useLocalStorage } from '@vueuse/core'
 import TipsCarousel from '@/components/TipsCarousel.vue'
+import { useBackgroundMaintenance } from '@/composables/useBackgroundMaintenance'
 
 const props = defineProps<{ tabIdx: number; paneIdx: number, searchScope?: string }>()
 const global = useGlobalStore()
@@ -34,7 +35,14 @@ const showAutoUpdateFeatureTip = useLocalStorage('iib_auto_update_feature_tip_sh
 const tagStore = useTagStore()
 const queue = createReactiveQueue()
 const loading = computed(() => !queue.isIdle)
+/** 手动触发索引更新中的状态（与 queue 解耦，避免锁住搜索按钮） */
+const indexUpdating = ref(false)
 const info = ref<DataBaseBasicInfo>()
+const bg = useBackgroundMaintenance()
+/** 实验功能开启且后台未报错时，过期交给后台静默处理，不再显示黄色提示/手动更新按钮 */
+const hideExpiredAlert = computed(() => bg.enabled.value && !bg.backgroundFailed.value)
+/** 实验功能开启但索引还没追平：给一行轻提示，避免把"搜不到新图"当成 bug */
+const showIndexStaleHint = computed(() => bg.enabled.value && !!info.value?.expired)
 const showHistoryRecord = ref(false)
 const matchIds = ref<MatchImageByTagsReq>({ and_tags: [], or_tags: [], not_tags: [], folder_paths_str: props.searchScope })
 const tags = computed(() =>
@@ -81,6 +89,8 @@ watch(tagClassSearch, debounce((val) => {
 const pairid = uniqueId()
 const openedKeys = ref((classifyTags.value.map(v => v[0])))
 onMounted(async () => {
+  // 先确保实验功能配置已加载，避免 mount 时读到默认值导致误走阻塞式更新
+  await bg.loadSettings().catch(() => undefined)
   console.log(new Date().toLocaleString())
   info.value = await getDbBasicInfo()
   await delay(20)
@@ -90,7 +100,8 @@ onMounted(async () => {
     console.log(new Date().toLocaleString())
   })
   if (info.value.img_count && info.value.expired) {
-    if (global.autoUpdateIndex) {
+    // 实验功能开启时交给后台 worker，mount 不再阻塞等待索引更新
+    if (global.autoUpdateIndex && !bg.enabled.value) {
       await onUpdateBtnClick()
     }
   }
@@ -101,17 +112,29 @@ onMounted(async () => {
 
 useGlobalEventListen('searchIndexExpired', () => info.value && (info.value.expired = true))
 
-const onUpdateBtnClick = makeAsyncFunctionSingle(
-  () =>
-    queue.pushAction(async () => {
-      await updateImageData()
-      info.value = await getDbBasicInfo()
-      openedKeys.value = (classifyTags.value.map(v => v[0]))
-      
-      tagStore.tagMap.clear()
-      return info.value
-    }).res
-)
+const onUpdateBtnClick = makeAsyncFunctionSingle(async () => {
+  indexUpdating.value = true
+  try {
+    await updateImageData()
+    info.value = await getDbBasicInfo()
+    openedKeys.value = (classifyTags.value.map(v => v[0]))
+
+    tagStore.tagMap.clear()
+    return info.value
+  } finally {
+    indexUpdating.value = false
+  }
+})
+
+// 后台静默维护完成一轮索引更新后，重新拉取标签列表（不刷新已打开的匹配结果）
+useGlobalEventListen('backgroundMaintenanceUpdated', async () => {
+  try {
+    info.value = await getDbBasicInfo()
+    tagStore.tagMap.clear()
+  } catch (error) {
+    // 后台刷新标签失败不打扰用户，下次轮询/进入页面会再拉
+  }
+})
 
 const query = () => {
   tagSearchHistory.value.add(matchIds.value)
@@ -251,7 +274,7 @@ const tagIdsToString = (tagIds: TagId[]) => {
     <ASelect v-if="false" />
     <template v-if="info">
       <a-alert
-        v-if="!showAutoUpdateFeatureTip"
+        v-if="!showAutoUpdateFeatureTip && !hideExpiredAlert"
         type="info"
         show-icon
         :message="$t('autoUpdateFeatureTip')"
@@ -266,27 +289,28 @@ const tagIdsToString = (tagIds: TagId[]) => {
         </template>
       </a-alert>
       <a-alert
-        v-if="info.expired && !global.autoUpdateIndex"
+        v-if="info.expired && !global.autoUpdateIndex && !bg.enabled.value"
         type="warning"
         show-icon
         :message="$t('indexExpiredManualUpdate')"
         style="margin-bottom: 8px;"
         closable
       />
+      <div v-if="showIndexStaleHint" class="index-stale-hint">{{ $t('indexStaleHint') }}</div>
       <div>
         <div class="search-bar">
           <div class="form-name">{{ $t('exactMatch') }}</div>
           <SearchSelect :conv="conv" mode="multiple" style="width: 100%" :options="tags"
             v-model:value="matchIds.and_tags" :disabled="!tags.length" :placeholder="$t('selectExactMatchTag')" />
-          <AButton @click="onUpdateBtnClick" :loading="!queue.isIdle" type="primary"
+          <AButton @click="onUpdateBtnClick" :loading="indexUpdating" type="primary"
             v-if="!info.img_count">
             {{ $t('generateIndexHint') }}</AButton>
           <template v-else>
-            <AButton type="primary" @click="query" :loading="!queue.isIdle">{{
+            <AButton type="primary" @click="query">{{
         $t('search') }}
             </AButton>
-            <AButton @click="onUpdateBtnClick" :loading="!queue.isIdle"
-              v-if="info.expired && !global.autoUpdateIndex"
+            <AButton @click="onUpdateBtnClick" :loading="indexUpdating"
+              v-if="info.expired && !global.autoUpdateIndex && !bg.enabled.value"
               style="margin-left: 8px;">
               {{ $t('UpdateIndex') }}
             </AButton>
@@ -367,6 +391,13 @@ const tagIdsToString = (tagIds: TagId[]) => {
   </div>
 </template>
 <style scoped lang="scss">
+.index-stale-hint {
+  margin: 0 4px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8c8c8c;
+}
+
 .spin-container {
   text-align: center;
   background: rgba(0, 0, 0, 0.05);
