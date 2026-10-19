@@ -33,6 +33,76 @@ export const updateImageData = async () => {
   await axiosInst.value.post('/db/update_image_data', {}, { timeout: Infinity })
 }
 
+// ===== Background maintenance (silent index update / thumbnail warmup) =====
+// 字段名以后端契约（.dev-contract.md §4）为准，不要自行扩展。
+
+export interface BackgroundIndexSettingsSnapshot {
+  index: boolean
+  thumbnail: boolean
+  thumbnailSize: number
+  cpuLimit: number
+}
+
+export type BackgroundIndexPhase = 'idle' | 'waiting' | 'scanning' | 'paused' | 'error' | string
+
+export interface BackgroundIndexStatus {
+  enabled: boolean
+  running: boolean
+  phase: BackgroundIndexPhase
+  currentDir: string
+  dirsTotal: number
+  dirsDone: number
+  filesIndexed: number
+  filesFailed: number
+  cpuPercent: number
+  lastRunAt: string | null
+  lastFinishedAt: string | null
+  nextRunInSec: number
+  error: string | null
+}
+
+export interface BackgroundThumbStatus {
+  enabled: boolean
+  running: boolean
+  pending: number
+  done: number
+  failed: number
+  capped: boolean
+  lastFinishedAt: string | null
+}
+
+export interface IndexStatusResp {
+  settings: BackgroundIndexSettingsSnapshot
+  index: BackgroundIndexStatus
+  thumb: BackgroundThumbStatus
+  /** 每次后台扫描完成会 +1，前端据此刷新标签列表 */
+  version: number
+}
+
+/**
+ * 读取后台维护状态。轮询接口：失败静默（请求带 silent，不弹 message.error），返回 null。
+ */
+export const getIndexStatus = async (): Promise<IndexStatusResp | null> => {
+  try {
+    const resp = await axiosInst.value.get('/db/index/status', { silent: true, timeout: 10_000 })
+    return resp.data as IndexStatusResp
+  } catch (error) {
+    return null
+  }
+}
+
+/**
+ * 请求后台立即运行一次索引扫描。失败静默，返回 null。
+ */
+export const runIndexNow = async (): Promise<{ ok: boolean, reason?: string, status?: IndexStatusResp } | null> => {
+  try {
+    const resp = await axiosInst.value.post('/db/index/run', {}, { silent: true, timeout: 10_000 })
+    return resp.data
+  } catch (error) {
+    return null
+  }
+}
+
 export const updateTag = async (tag: Tag) => {
   await axiosInst.value.post('/db/update_tag', tag)
 }
@@ -95,6 +165,7 @@ export interface SearchBySubstrReq {
   folder_paths?: string[];
   size?: number;
   media_type?: string;  // "all", "image", "video"
+  and_tags?: TagId[];  // 同时含有全部所选标签
 }
 
 

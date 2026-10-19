@@ -14,6 +14,10 @@ import { openRebuildImageIndexModal } from '@/components/functionalCallableComp'
 import { useGlobalStore } from '@/store/useGlobalStore'
 import { useKeepMultiSelect } from '../fileTransfer/hook'
 import { openTiktokViewWithFiles } from '@/util/tiktokHelper'
+import { useBackgroundMaintenance } from '@/composables/useBackgroundMaintenance'
+
+// 后台静默维护开启时，手动索引入口统一收进全局设置/后台维护弹窗，搜索页不再重复露出。
+const { enabled: backgroundMaintenanceEnabled } = useBackgroundMaintenance()
 
 const props = defineProps<{
   tabIdx: number
@@ -177,8 +181,8 @@ const onTiktokViewClick = () => {
       </RecycleScroller>
       <div v-else-if="iter.load && selectedTagIds.and_tags.length === 1 && !selectedTagIds.folder_paths_str?.trim()">
         <div class="no-res-hint">
-          <p class="hint">{{ $t('tagSearchNoResultsMessage') }}</p>
-          <AButton @click="openRebuildImageIndexModal()" type="primary">{{ $t('rebuildImageIndex') }}</AButton>
+          <p class="hint">{{ backgroundMaintenanceEnabled ? $t('fuzzy-search-noResults') : $t('tagSearchNoResultsMessage') }}</p>
+          <AButton v-if="!backgroundMaintenanceEnabled" @click="openRebuildImageIndexModal()" type="primary">{{ $t('rebuildImageIndex') }}</AButton>
         </div>
       </div>
       <div v-if="previewing" class="preview-switch">

@@ -1,3 +1,7 @@
+from scripts.iib.timeline import tlog
+
+tlog("python_start")
+
 import codecs
 from typing import List
 from fastapi import FastAPI, Response
@@ -11,7 +15,7 @@ from scripts.iib.tool import (
     sd_img_dirs,
     normalize_paths,
 )
-from scripts.iib.db.datamodel import DataBase, Image, ExtraPath
+from scripts.iib.db.datamodel import DataBase, Image, ExtraPath, Folder
 from scripts.iib.db.update_image_data import update_image_data
 import argparse
 from typing import Optional, Coroutine
@@ -64,7 +68,34 @@ def do_update_image_index(sd_webui_config: str, relative_to_config=False):
     if not len(dirs):
         return print(f"{tag} no valid image directories, skipped")
     conn = DataBase.get_conn()
-    update_image_data(dirs)
+    if Image.count(conn=conn) == 0:
+        # 全新建索引：递归扫所有根目录。
+        scan_dirs = dirs
+    else:
+        # 已有索引：只扫过期目录（否则传根目录会被"根目录未变化"提前 return，
+        # 导致子目录里新增的图片永远不被发现）。新加、还没有 folders 记录的
+        # 根目录同样要扫，否则它下面的图永远不会进索引。
+        scan_dirs = list(Folder.get_expired_dirs(conn))
+        known_paths = set()
+        try:
+            cur = conn.execute("SELECT path FROM folders")
+            known_paths = {
+                os.path.normcase(os.path.normpath(row[0])) for row in cur if row and row[0]
+            }
+            cur.close()
+        except Exception as e:
+            print(f"{tag} load folder records failed: {e}")
+        seen = {os.path.normcase(os.path.normpath(dir)) for dir in scan_dirs}
+        for dir in dirs:
+            norm_dir = os.path.normpath(dir)
+            key = os.path.normcase(norm_dir)
+            if key in seen or key in known_paths:
+                continue
+            seen.add(key)
+            scan_dirs.append(norm_dir)
+    if not scan_dirs:
+        return print("image index is up to date. ✨")
+    update_image_data(scan_dirs)
     if Image.count(conn=conn) == 0:
         return print(f"{tag} it appears that there is some issue")
     print("update image index completed. ✨")
@@ -178,6 +209,12 @@ def setup_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--port", type=int, help="The port to use", default=default_port
+    )
+    parser.add_argument(
+        "--parent_pid",
+        type=int,
+        default=None,
+        help="PID of the desktop shell that started this process. The server exits as soon as that process is gone, so it can never be left behind as an orphan.",
     )
     parser.add_argument(
         "--sd_webui_config", type=str, default=None, help="The path to the config file"
@@ -296,4 +333,9 @@ if __name__ == "__main__":
         )
         exit(0)
 
+    tlog("launch_app", port=args.port, host=args.host)
+    if args_dict.get("parent_pid"):
+        from scripts.iib.parent_watchdog import watch_parent
+
+        watch_parent(args_dict["parent_pid"])
     launch_app(**vars(args))

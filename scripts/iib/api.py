@@ -1,11 +1,13 @@
 import base64
 from datetime import datetime, timedelta
 import io
+import json
 import os
 from pathlib import Path
 import shutil
 import sqlite3
 import threading
+import time
 
 from scripts.iib.dir_cover_cache import get_top_4_media_info
 from scripts.iib.tool import (
@@ -40,6 +42,7 @@ from scripts.iib.tool import (
     get_file_info_by_path,
     get_data_file_path
 )
+from scripts.iib.timeline import tlog
 from fastapi import FastAPI, HTTPException, Header, Response
 from fastapi.staticfiles import StaticFiles
 import asyncio
@@ -68,8 +71,11 @@ from scripts.iib.topic_cluster import mount_topic_cluster_routes
 from scripts.iib.tag_graph import mount_tag_graph_routes
 from scripts.iib.organize_files import mount_organize_routes
 from scripts.iib.trend import mount_trend_routes
+from scripts.iib.index_worker import default_status, get_worker, init_worker
 from scripts.iib.logger import logger
 from scripts.iib.seq import seq
+from scripts.iib.thumb_cache import cache_path_for, ensure_thumbnail
+
 import urllib.parse
 from scripts.iib.fastapi_video import range_requests_response, close_video_file_reader
 from scripts.iib.parsers.index import parse_image_info
@@ -99,6 +105,38 @@ mem = {"secret_key_hash": None, "extra_paths": [], "all_scanned_paths": []}
 secret_key = os.getenv("IIB_SECRET_KEY")
 if secret_key:
     print("Secret key loaded successfully. ")
+
+
+class RequestTracker:
+    """极轻量的前台请求追踪：最近请求时间 + inflight 计数。
+
+    后台 worker 的 Governor 通过 ``recently_active()`` 判断是否需要额外让路，
+    因此这里只做两次加锁自增/自减，不写日志、不做任何 IO。
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._inflight = 0
+        self._last_request_at = 0.0
+
+    def begin(self) -> None:
+        with self._lock:
+            self._inflight += 1
+            self._last_request_at = time.monotonic()
+
+    def end(self) -> None:
+        with self._lock:
+            self._inflight = max(0, self._inflight - 1)
+            self._last_request_at = time.monotonic()
+
+    def recently_active(self, within_seconds: float = 1.0) -> bool:
+        with self._lock:
+            if self._inflight > 0:
+                return True
+            return (time.monotonic() - self._last_request_at) <= within_seconds
+
+
+request_tracker = RequestTracker()
 
 # AI 配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -131,10 +169,6 @@ is_api_writeable = not (os.getenv("IIB_ACCESS_CONTROL_PERMISSION")) or (
 IIB_DEBUG=False
 
 _MAX_THUMBNAIL_DIMENSION = 4096
-_THUMBNAIL_GENERATION_SLOTS = threading.BoundedSemaphore(
-    max(2, min(4, os.cpu_count() or 2))
-)
-_THUMBNAIL_LOCKS = tuple(threading.Lock() for _ in range(64))
 
 
 def _parse_thumbnail_size(size: str):
@@ -146,39 +180,6 @@ def _parse_thumbnail_size(size: str):
     if not (0 < width <= _MAX_THUMBNAIL_DIMENSION and 0 < height <= _MAX_THUMBNAIL_DIMENSION):
         raise HTTPException(status_code=400, detail="Invalid thumbnail size")
     return width, height
-
-
-def _ensure_thumbnail(path: str, cache_path: str, width: int, height: int):
-    if os.path.exists(cache_path):
-        return
-
-    lock_idx = int(hashlib.md5(cache_path.encode("utf-8")).hexdigest()[:8], 16) % len(_THUMBNAIL_LOCKS)
-    # Wait for a generation slot *before* taking the per-key lock, so threads
-    # waiting for a slot do not hold a stripe lock (which would needlessly
-    # serialize unrelated cache keys that hash to the same stripe).
-    with _THUMBNAIL_GENERATION_SLOTS:
-        with _THUMBNAIL_LOCKS[lock_idx]:
-            if os.path.exists(cache_path):
-                return
-
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            temp_path = f"{cache_path}.{threading.get_ident()}.tmp"
-            try:
-                with Image.open(path) as img:
-                    # JPEG decoders can downsample during decode, which saves substantial
-                    # CPU and memory for large source images.
-                    img.draft("RGB", (width, height))
-                    img.thumbnail((width, height))
-                    img.save(temp_path, "WEBP", quality=80, method=1)
-                os.replace(temp_path, cache_path)
-            except Exception:
-                # Deleted or broken source images used to surface as opaque 500s,
-                # hammered on every retry; report them as 404 so the client can
-                # fall back to the raw file instead.
-                raise HTTPException(status_code=404, detail="Failed to generate thumbnail")
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
 
 
 async def write_permission_required():
@@ -206,8 +207,42 @@ async def verify_secret(request: Request):
         raise HTTPException(status_code=401, detail={"type": "secret_verification_failed"})
 
 DEFAULT_BASE = "/infinite_image_browsing"
+_timeline_mem = {"first_request_logged": False}
+
+
 def infinite_image_browsing_api(app: FastAPI, **kwargs):
-    backup_db_file(DataBase.get_db_file_path())
+    tlog("api_build_start")
+
+    # 极轻量的全量请求追踪中间件（始终启用）：只维护最近请求时间与 inflight 计数，
+    # 供后台 worker 的 Governor 在前台有操作时让路。不加日志、不做 IO。
+    @app.middleware("http")
+    async def track_requests(request: Request, call_next):
+        request_tracker.begin()
+        try:
+            return await call_next(request)
+        finally:
+            request_tracker.end()
+
+    # 每天首次启动要整库备份（几百 MB）。同步执行会卡在 uvicorn 绑定端口之前，而桌面端
+    # webview 不会等后端就绪就发请求；即使放到后台线程，冷启动时也会和解压抢磁盘 I/O。
+    # 所以默认再延后 IIB_DB_FILE_BACKUP_DELAY 秒（默认 30s）执行，让启动阶段只做启动的事。
+    try:
+        backup_delay = float(os.environ.get("IIB_DB_FILE_BACKUP_DELAY", "30"))
+    except ValueError:
+        backup_delay = 30.0
+    db_file_path = DataBase.get_db_file_path()
+    if backup_delay > 0:
+        backup_timer = threading.Timer(backup_delay, backup_db_file, args=(db_file_path,))
+        backup_timer.daemon = True
+        backup_timer.start()
+    else:
+        threading.Thread(
+            target=backup_db_file,
+            args=(db_file_path,),
+            name="iib-db-backup",
+            daemon=True,
+        ).start()
+    tlog("backup_scheduled", delay=backup_delay, db=os.path.basename(db_file_path))
     api_base = kwargs.get("base") if isinstance(kwargs.get("base"), str) else DEFAULT_BASE
     fe_public_path = kwargs.get("fe_public_path") if isinstance(kwargs.get("fe_public_path"), str) else api_base
     cache_base_dir = get_cache_dir()
@@ -231,6 +266,9 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                 and path.find("infinite_image_browsing/fe-static") == -1
             ):
                 logger.info(f"Received request: {request.method} {request.url}")
+                if not _timeline_mem["first_request_logged"]:
+                    _timeline_mem["first_request_logged"] = True
+                    tlog("first_request", method=request.method, path=path)
                 if request.query_params:
                     logger.debug(f"Query Params: {request.query_params}")
                 if request.path_params:
@@ -403,6 +441,24 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
     @app.post(f"{api_base}/app_fe_setting", dependencies=[Depends(verify_secret), Depends(write_permission_required)])
     async def app_fe_setting(req: AppFeSettingReq):
         conn = DataBase.get_conn()
+        if req.name == "background_maintenance":
+            from scripts.iib.maintenance_settings import normalize_settings, save_settings
+
+            try:
+                raw = json.loads(req.value) if isinstance(req.value, str) else {}
+            except (TypeError, ValueError):
+                raw = {}
+            if not isinstance(raw, dict):
+                raw = {}
+            saved = save_settings(conn, normalize_settings(raw))
+            worker = get_worker()
+            if worker is not None:
+                # reload_settings 在开关关闭时会 join 后台线程（最多 2s），
+                # 放到线程池里执行，避免阻塞事件循环。
+                from starlette.concurrency import run_in_threadpool
+
+                await run_in_threadpool(worker.reload_settings)
+            return {"ok": True, "background_maintenance": saved}
         GlobalSetting.save_setting(conn, req.name, req.value)
         # 如果更新的是自动标签规则，重新加载
         if req.name == "auto_tag_rules":
@@ -417,6 +473,16 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         conn = DataBase.get_conn()
         GlobalSetting.remove_setting(conn, req.name)
     
+    class TimelineReq(BaseModel):
+        events: List[dict] = []
+
+    @app.post(f"{api_base}/timeline", dependencies=[Depends(verify_secret)])
+    async def report_timeline(req: TimelineReq):
+        """前端启动时间线（页面开始加载 / 后端就绪 / 数据加载完成），写进日志便于分析冷启动。"""
+        for e in req.events:
+            tlog("fe_event", name=e.get("event"), ms=e.get("ms"))
+        return {"ok": True}
+
     @app.get(f"{api_base}/version", dependencies=[Depends(verify_secret)])
     async def get_version():
         import sys
@@ -692,8 +758,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         # 生成缓存文件的路径
         hash_dir = hashlib.md5((path + t).encode("utf-8")).hexdigest()
         hash = hash_dir + size
-        cache_dir = os.path.join(cache_base_dir, "iib_cache", hash_dir)
-        cache_path = os.path.join(cache_dir, f"{size}.webp")
+        cache_path = cache_path_for(path, t, size)
         cache_headers = {
             "Cache-Control": "public, max-age=31536000, immutable",
             "ETag": hash,
@@ -718,7 +783,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         
 
         # 如果缓存文件不存在，则生成缩略图并保存
-        _ensure_thumbnail(path, cache_path, width, height)
+        ensure_thumbnail(path, cache_path, width, height)
 
         # 返回缓存文件
         return FileResponse(
@@ -1040,10 +1105,15 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                 return Response(content=content, media_type="text/html")
         return FileResponse(index_html_path)
     
-    static_dir = get_data_file_path("vue/dist") if is_exe_ver else f"{cwd}/vue/dist" 
+    static_dir = get_data_file_path("vue/dist") if is_exe_ver else f"{cwd}/vue/dist"
+    static_dir_abs = os.path.realpath(static_dir)
     @app.get(api_base + "/fe-static/{file_path:path}")
     async def serve_static_file(file_path: str):
-        file_full_path = f"{static_dir}/{file_path}"
+        # Contain the request within the static dir (CWE-22): the raw "{file_path:path}"
+        # value is not normalized by the router, so "../" segments would otherwise escape it.
+        file_full_path = os.path.realpath(f"{static_dir}/{file_path}")
+        if not file_full_path.startswith(static_dir_abs + os.sep):
+            raise HTTPException(status_code=404, detail="File not found")
         if file_path.endswith(".js"):
             with open(file_full_path, "r", encoding="utf-8") as file:
                 content = file.read().replace(DEFAULT_BASE, fe_public_path)
@@ -1224,12 +1294,23 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
 
     db_api_base = api_base + "/db"
 
+    def get_expired_dirs_cached() -> List[str]:
+        """过期目录：优先用 worker 的 15s 缓存（避免每次 1w+ 目录全量 stat）。"""
+        worker = get_worker()
+        if worker is not None:
+            try:
+                return worker.cached_expired_dirs()
+            except Exception as e:
+                logger.warning("worker.cached_expired_dirs failed, fallback: %s", e)
+        conn = DataBase.get_conn()
+        return Folder.get_expired_dirs(conn)
+
     @app.get(db_api_base + "/basic_info", dependencies=[Depends(verify_secret)])
     async def get_db_basic_info():
         conn = DataBase.get_conn()
         img_count = DbImg.count(conn)
         tags = Tag.get_all(conn)
-        expired_dirs = Folder.get_expired_dirs(conn)
+        expired_dirs = get_expired_dirs_cached()
         return {
             "img_count": img_count,
             "tags": tags,
@@ -1248,32 +1329,55 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
 
     @app.get(db_api_base + "/expired_dirs", dependencies=[Depends(verify_secret)])
     async def get_db_expired():
-        conn = DataBase.get_conn()
-        expired_dirs = Folder.get_expired_dirs(conn)
+        expired_dirs = get_expired_dirs_cached()
         return {
             "expired": len(expired_dirs) != 0,
             "expired_dirs": expired_dirs,
         }
 
+    @app.get(db_api_base + "/index/status", dependencies=[Depends(verify_secret)])
+    async def get_index_status():
+        worker = get_worker()
+        if worker is None:
+            return default_status()
+        return worker.status()
+
+    @app.post(
+        db_api_base + "/index/run",
+        dependencies=[Depends(verify_secret), Depends(write_permission_required)],
+    )
+    async def run_index_now():
+        worker = get_worker()
+        if worker is None or not worker.trigger_now():
+            return {"ok": False, "reason": "disabled"}
+        return {"ok": True, "status": worker.status()}
+
     @app.post(
         db_api_base + "/update_image_data",
         dependencies=[Depends(verify_secret)],
     )
-    async def update_image_db_data():
-        try:
-            DataBase._initing = True
-            conn = DataBase.get_conn()
-            img_count = DbImg.count(conn)
-            update_extra_paths(conn)
-            dirs = (
-                get_img_search_dirs()
-                if img_count == 0
-                else Folder.get_expired_dirs(conn)
-            ) + mem["extra_paths"]
+    def update_image_db_data():
+        # 普通 def：FastAPI 会放到线程池执行，不会阻塞事件循环。worker 的
+        # run_blocking() 与后台扫描通过 scan_lock 互斥；返回体保持为空以兼容旧前端。
+        worker = get_worker()
+        if worker is not None:
+            try:
+                update_extra_paths(DataBase.get_conn())
+            except Exception as e:
+                logger.warning("refresh extra paths before index update failed: %s", e)
+            worker.run_blocking()
+            return
 
-            update_image_data(dirs)
-        finally:
-            DataBase._initing = False
+        # 兜底：worker 未初始化（例如只读 API 场景），保持旧行为。
+        conn = DataBase.get_conn()
+        img_count = DbImg.count(conn)
+        update_extra_paths(conn)
+        dirs = (
+            get_img_search_dirs()
+            if img_count == 0
+            else Folder.get_expired_dirs(conn)
+        ) + mem["extra_paths"]
+        update_image_data(dirs)
 
     class SearchBySubstrReq(BaseModel):
         surstr: str
@@ -1283,6 +1387,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         size: Optional[int] = 200
         path_only: Optional[bool] = False
         media_type: Optional[str] = None  # "all", "image", "video"
+        and_tags: Optional[List[int]] = []  # 同时含有全部所选标签
 
     @app.post(db_api_base + "/search_by_substr", dependencies=[Depends(verify_secret)])
     async def search_by_substr(req: SearchBySubstrReq):
@@ -1300,7 +1405,8 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
             regexp=req.regexp,
             folder_paths=folder_paths,
             path_only=req.path_only,
-            media_type=req.media_type
+            media_type=req.media_type,
+            and_tags=req.and_tags
         )
         return {
             "files": filter_allowed_files([x.to_file_info() for x in imgs]),
@@ -1669,7 +1775,16 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
     )
     async def rebuild_index():
         update_extra_paths(conn = DataBase.get_conn())
-        rebuild_image_index(search_dirs = get_img_search_dirs() + mem["extra_paths"])
+        worker = get_worker()
+        # 重建索引与后台增量扫描互斥（可选优化，避免两边同时写库）
+        if worker is not None:
+            worker.pause("rebuild")
+        try:
+            rebuild_image_index(search_dirs = get_img_search_dirs() + mem["extra_paths"])
+        finally:
+            if worker is not None:
+                worker.invalidate_expired_cache()
+                worker.resume("rebuild")
 
 
     # AI 相关路由
@@ -1715,4 +1830,22 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         except requests.RequestException as e:
             logger.error(f"AI API request failed: {e}")
             raise HTTPException(status_code=500, detail=f"AI API request failed: {str(e)}")
+
+
+    # ========== 后台静默维护 worker ==========
+    # 必须在所有路由注册完之后初始化：worker 线程会复用 api 的扫描目录回调，
+    # 并且要能安全地回读 DB 里的 background_maintenance 设置。
+    def _maintenance_scan_dirs() -> List[str]:
+        try:
+            return (
+                get_img_search_dirs()
+                + mem["extra_paths"]
+                + (kwargs.get("extra_paths_cli") or [])
+            )
+        except Exception as e:
+            logger.error("resolve scan dirs for maintenance worker failed: %s", e)
+            return []
+
+    init_worker(_maintenance_scan_dirs)
+    tlog("maintenance_worker_ready")
 

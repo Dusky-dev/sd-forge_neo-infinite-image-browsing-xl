@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { FileOutlined, FolderOpenOutlined, EllipsisOutlined, HeartOutlined, HeartFilled, DragOutlined } from '@/icon'
+import {
+  FileOutlined, FolderOpenOutlined, EllipsisOutlined, HeartOutlined, HeartFilled, DragOutlined,
+  EyeOutlined, FileTextOutlined, FilePdfOutlined, FileMarkdownOutlined, FileZipOutlined, FileImageOutlined
+} from '@/icon'
 import { useGlobalStore } from '@/store/useGlobalStore'
 import { fallbackImage, ok } from 'vue3-ts-util'
 import type { FileNodeInfo } from '@/api/files'
-import { isImageFile, isVideoFile, isAudioFile } from '@/util'
+import { isImageFile, isVideoFile, isAudioFile, formatDuration } from '@/util'
 import { toImageThumbnailUrl, toVideoCoverUrl, toRawFileUrl } from '@/util/file'
+import { getCachedVideoDuration, loadVideoDuration } from '@/util/videoDuration'
 import type { MenuInfo } from 'ant-design-vue/lib/menu/src/interface'
 import { computed, ref, nextTick, watch, onBeforeUnmount } from 'vue'
 import ContextMenu from './ContextMenu.vue'
@@ -13,7 +17,7 @@ import DraggableImage from './DraggableImage.vue'
 import { useTagStore } from '@/store/useTagStore'
 import { CloseCircleOutlined, StarFilled, StarOutlined } from '@/icon'
 import { Tag } from '@/api/db'
-import { openVideoModal, openAudioModal } from './functionalCallableComp'
+import { openVideoModal, openAudioModal, openFilePreviewModal, getFilePreviewKind } from './functionalCallableComp'
 import type { GenDiffInfo } from '@/api/files'
 import { play } from '@/icon'
 import { Top4MediaInfo } from '@/api'
@@ -214,6 +218,78 @@ const handleDrop = (event: DragEvent) => {
   emit('dropToFolder', event, props.file, props.idx)
 }
 
+// 非图片/视频/音频的文件，点击后会打开统一的预览 modal
+const previewable = computed(() =>
+  props.file.type === 'file' &&
+  !isImageFile(props.file.name) &&
+  !isVideoFile(props.file.name) &&
+  !isAudioFile(props.file.name)
+)
+
+const previewHintKey = computed<'filePreviewHint' | 'fileOpenHint'>(() =>
+  getFilePreviewKind(props.file.name) === 'other' ? 'fileOpenHint' : 'filePreviewHint'
+)
+
+const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz']
+
+// 按文件类型给个直观的图标，让用户知道这是个能打开的文件
+const fileTypeIcon = computed(() => {
+  const ext = props.file.name.split('.').pop()?.toLowerCase() ?? ''
+  const kind = getFilePreviewKind(props.file.name)
+  if (archiveExts.includes(ext)) {
+    return FileZipOutlined
+  }
+  if (kind === 'pdf') {
+    return FilePdfOutlined
+  }
+  if (['md', 'markdown'].includes(ext)) {
+    return FileMarkdownOutlined
+  }
+  if (kind === 'image') {
+    return FileImageOutlined
+  }
+  if (kind === 'text') {
+    return FileTextOutlined
+  }
+  return FileOutlined
+})
+
+// 视频时长懒加载：只在信息行可见时探测，缓存/限流都在 util 里
+const videoDuration = ref<number | null>(null)
+let videoDurationTimer: number | undefined
+
+const syncVideoDuration = () => {
+  window.clearTimeout(videoDurationTimer)
+  if (!isVideoFile(props.file.name)) {
+    videoDuration.value = null
+    return
+  }
+  const cached = getCachedVideoDuration(props.file)
+  if (cached !== undefined) {
+    videoDuration.value = cached
+    return
+  }
+  videoDuration.value = null
+  // 延迟一点再探测，快速滚动时不至于每个 cell 都打请求
+  const target = props.file
+  videoDurationTimer = window.setTimeout(() => {
+    loadVideoDuration(target).then((duration) => {
+      // cell 被复用成别的文件时丢弃这次结果
+      if (props.file.fullpath === target.fullpath && props.file.date === target.date) {
+        videoDuration.value = duration
+      }
+    })
+  }, 200)
+}
+
+watch(
+  [() => props.file.fullpath, () => props.file.date, () => props.cellWidth],
+  syncVideoDuration,
+  { immediate: true }
+)
+
+onBeforeUnmount(() => window.clearTimeout(videoDurationTimer))
+
 // 处理文件点击事件
 const handleFileClick = (event: MouseEvent) => {
   // 检查magic switch是否开启且是图片文件（视频有自己的处理逻辑）
@@ -226,6 +302,13 @@ const handleFileClick = (event: MouseEvent) => {
     setTimeout(() => {
       closeImageFullscreenPreview()
     }, 500);
+  } else if (
+    previewable.value &&
+    !event.shiftKey && !event.ctrlKey && !event.metaKey &&
+    !(event.target as HTMLElement)?.closest?.('.float-btn-wrap, .close-icon')
+  ) {
+    // json/txt/pdf 等其它文件统一用预览 modal 打开
+    openFilePreviewModal(props.file)
   } else {
     // 正常触发文件点击事件
     emit('fileItemClick', event, props.file, props.idx)
@@ -275,7 +358,7 @@ const handleAudioClick = () => {
   <a-dropdown :trigger="['contextmenu']" :visible="!global.longPressOpenContextMenu ? undefined : typeof idx === 'number' && showMenuIdx === idx
     " @update:visible="(v: boolean) => typeof idx === 'number' && emit('update:showMenuIdx', v ? idx : -1)">
     <li class="file file-item-trigger grid" :class="{
-    clickable: file.type === 'dir',
+    clickable: file.type === 'dir' || previewable,
     selected
   }" :data-idx="idx" :key="file.name" draggable="true" @dragstart="emit('dragstart', $event, idx)"
       @dragend="emit('dragend', $event, idx)" @dragover="handleDragOver" @drop="handleDrop"
@@ -366,6 +449,7 @@ const handleAudioClick = () => {
               {{ tag.name }}
             </a-tag>
           </div>
+          <span class="duration-badge" v-if="videoDuration && !isPlayingInline">{{ formatDuration(videoDuration) }}</span>
         </div>
         <div :class="`idx-${idx} item-content audio`" v-else-if="isAudioFile(file.name)"
           @click="handleAudioClick">
@@ -376,8 +460,9 @@ const handleAudioClick = () => {
             </a-tag>
           </div>
         </div>
-        <div v-else class="preview-icon-wrap">
-          <file-outlined class="icon center" v-if="file.type === 'file'" />
+        <div v-else class="preview-icon-wrap" :class="{ previewable }"
+          :title="previewable ? $t(previewHintKey) : undefined">
+          <component :is="fileTypeIcon" class="icon center" v-if="file.type === 'file'" />
           <div v-else-if="coverFiles?.length && cellWidth > 160" class="dir-cover-container">
             <img class="dir-cover-item" loading="lazy" decoding="async" fetchpriority="low"
               :src="item.media_type === 'image' ? toImageThumbnailUrl(item) : toVideoCoverUrl(item)"
@@ -385,6 +470,10 @@ const handleAudioClick = () => {
           </div>
 
           <folder-open-outlined class="icon center" v-else />
+          <span class="preview-hint" v-if="previewable">
+            <eye-outlined />
+            <template v-if="cellWidth > 120">{{ $t(previewHintKey) }}</template>
+          </span>
         </div>
         <div class="profile" v-if="cellWidth > minShowDetailWidth">
           <div class="name line-clamp-1" :title="file.name">
@@ -573,6 +662,52 @@ const handleAudioClick = () => {
 
   &:hover .more {
     opacity: 1;
+  }
+
+  &:hover .preview-hint {
+    opacity: 1;
+  }
+
+  .preview-icon-wrap {
+    position: relative;
+
+    .preview-hint {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 3px 8px;
+      border-radius: 100vh;
+      font-size: 0.7em;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+      z-index: 10;
+    }
+  }
+
+  // 视频时长角标，放封面左下角（右下角会被 tag 占掉）
+  .duration-badge {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    padding: 2px 8px;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    font-size: 13px;
+    font-weight: bold;
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+    z-index: 6;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
   }
 
   .more {

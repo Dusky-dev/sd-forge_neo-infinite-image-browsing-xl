@@ -1,6 +1,43 @@
 [跳到中文](#中文)
 # English
 
+## 2026-10-18
+### ✨ Experimental: silent background maintenance (index + thumbnail warm-up)
+- New experimental feature, **off by default**. A banner on the start page opens a modal with two database-persisted switches: silent index update and silent thumbnail warm-up (the latter requires the former). The config lives in the `global_setting` table, so it is shared between the desktop app and the WebUI extension.
+- Index updates no longer have to block the search page. A single background worker thread keeps scanning expired folders incrementally (chunked commits), paced by a duty-cycle governor that keeps the process around or below 20% CPU (it is a single thread, so at most one core), yields while the UI is active, and pauses during rebuild/organize jobs.
+- Only images indexed after the feature was enabled get pre-generated thumbnails, with a 2 GB soft cap on the shared thumbnail cache; older images keep the existing on-demand path.
+- `POST /db/update_image_data` no longer blocks the event loop (it runs in the threadpool), `basic_info`/`expired_dirs` use a 15 s cache instead of stat-ing every folder on each page mount, and the new `GET /db/index/status` + `POST /db/index/run` endpoints expose progress and allow an immediate run.
+- Fixed while in there: the folder scan watermark was written after listing (files added during a scan could be missed forever), re-indexing a changed image no longer loses custom tags / manually edited metadata, `image.path` upserts keep the row id, `Tag.get_or_create` no longer churns tag ids, the DB uses a busy timeout with retries, the auto-tag matcher no longer shares a connection across threads, and `--update_image_index` now scans expired folders instead of only the roots.
+- While the feature is on but the index is still catching up, the search pages show a single muted line ("The index may still be catching up; the newest images may not appear in results yet.") instead of any blocking prompt; it disappears automatically once the round finishes.
+
+## 2026-10-09
+### 🔒 Sidecar lifecycle: no more orphans, graceful shutdown, auto restart
+- The api server is assigned to a Windows Job Object with kill-on-close, so if the app process dies for any reason (crash, Task Manager, power loss) the server is killed together with it. The server also watches the app process (`--parent_pid`) and exits on its own as soon as the app is gone.
+- Closing the window now asks the server to shut down and waits up to 3 seconds for it to exit before force-killing it. Previously it was killed unconditionally, which skipped its cleanup and left a ~200 MB unpack directory behind on every launch.
+- If the api server exits unexpectedly while the app is running, it is restarted automatically (1s/2s/4s backoff, up to 3 attempts).
+- The desktop sidecar unpacks into a fixed cache directory (`{CACHE_DIR}/iib_api_server`) instead of a fresh `%TEMP%/onefile_{PID}_{TIME}_{RANDOM}` on every launch, so the ~200 MB self-extraction is paid once and reused afterwards. The startup timeline logs cover all of it.
+
+### 🐛 Startup: wait hint, delayed daily backup, timing logs
+- The desktop app now shows a "Starting the local service…" overlay with the elapsed seconds while it waits for the bundled api server, instead of a silent skeleton. The first launch has to unpack a ~50 MB self-extracting binary, which commonly takes 5–10 seconds.
+- The daily database backup is delayed by `IIB_DB_FILE_BACKUP_DELAY` seconds (default 30) so it no longer competes with the cold start. It still runs in a background thread and still takes a consistent SQLite snapshot.
+- Added a startup timeline: `[TIMELINE]` lines with millisecond timestamps in `iib_api_server.log`, covering the tauri shell, the sidecar process and the frontend (`fe_event`), so cold-start phases can be measured.
+
+## 2026-10-08
+### 🐛 Fix the spurious "An error occurred" toast on the first desktop launch
+The desktop app fires its first API requests as soon as the webview is ready, which can be before the bundled api server (a self-extracting onefile binary) has bound its port. Such a request gets no HTTP response at all, so the frontend falls back to the generic "An error occurred" toast. It was most visible on the first launch of a day, where the server also copies the whole SQLite database (several hundred MB) as a daily backup before it starts listening.
+- Startup requests now wait until the api server answers. The readiness probe retries every 500ms for up to 60s instead of failing, and no error toast is shown while waiting.
+- The daily database backup now runs in a background thread and uses SQLite's online backup API for a consistent snapshot, so it no longer delays the server from listening. The once-a-day check, file naming and retention are unchanged.
+
+## 2026-10-04
+### ✨ Unified preview modal for more file types
+Clicking a file that isn't an image, video, or audio no longer does nothing — it now opens a single preview modal. Text-based files (json, txt, md, yaml, csv, source code, ...) are read from the existing `/file` endpoint and rendered as text: JSON is pretty-printed, non-UTF-8 content (GBK / UTF-16) is decoded when possible, and only the first 512KB is read so huge files can't lock up the browser. PDFs open in an embedded viewer and SVG/ICO images render inline; anything unrecognized falls back to a dialog with download and open-with-default-app actions. File tiles also show a type-aware icon plus a hover "Preview" hint and pointer cursor, so it's obvious which files can be opened.
+
+### ⏱️ Video duration on file cards
+Video files now show a bold duration badge in the bottom-left corner of the thumbnail (like a player time chip), and the video player modal shows the duration as well. Durations are read lazily in the browser, cached per file, capped at 3 concurrent probes and debounced so fast scrolling doesn't fire requests. Formats the browser can't decode (mkv/avi/flv) simply show nothing.
+
+### 🏷️ Tag filter (AND) in fuzzy search
+The fuzzy search page has a tag multi-select next to the search scope: selecting several tags only returns files that contain all of them (AND), combined with the existing scope, media type and regex filters. The selection is stored in the search history too. The picker reuses the tag list the page already loads and filters the huge `pos` / `size` tag types out in the frontend.
+
 ## 2026-08-21
 ### 🔒 Fix path traversal in is_path_trusted (CWE-22/CWE-59)
 Hardened the trusted-path check used by path operations. `os.path.realpath()` now resolves symlinks before the comparison, and a trailing `os.sep` is added to the `startswith()` check to prevent a prefix-collision bypass.
@@ -862,6 +899,43 @@ Triggered under the same circumstances as above, there will be a button to updat
 
 
 # 中文
+
+## 2026-10-18
+### ✨ 实验性功能：后台静默维护（索引 + 缩略图预热）
+- 新实验性功能，**默认关闭**。启动页顶部有提示条，点开是说明弹窗，里面两个开关：静默更新索引、静默预热缩略图（后者需先开启前者）。配置持久化在 `global_setting` 表，桌面端与 WebUI 扩展共用。
+- 索引更新不再阻塞搜索页：后台单线程 worker 增量扫描过期目录（分片提交），由 duty-cycle 限速器把整机 CPU 压在大约 20% 以内（单线程最多一个核），前台有操作时让路，重建索引/整理文件期间自动暂停。
+- 只预热"开启功能之后新加入索引"的图片缩略图，共享缩略图缓存有 2GB 软上限；老图片仍走原来的按需生成。
+- `POST /db/update_image_data` 不再阻塞事件循环（改到线程池执行）；`basic_info`/`expired_dirs` 用 15 秒缓存，页面挂载时不再对每个目录做 stat；新增 `GET /db/index/status`、`POST /db/index/run` 两个端点用于看进度和立即触发。
+- 顺带修复：扫描水位写在列目录之后（扫描期间新增的文件可能永久漏掉）、重扫变更图片会丢自定义标签/手动编辑信息、`image.path` 改为 upsert 保留行 id、`Tag.get_or_create` 不再更换 tag id、数据库加 busy timeout 与重试、自动标签匹配器不再跨线程共享连接、`--update_image_index` 改为扫描过期目录而不是只扫根目录。
+- 功能开启但索引还在追平时，搜索页只显示一行灰色提示（“索引可能还没更新完，新图片可能暂未出现在结果里”），不阻塞任何操作，追平后自动消失。
+
+## 2026-10-09
+### 🔒 后端进程生命周期：不再有孤儿、优雅退出、崩溃自动重启
+- 后端进程被放进一个「关闭即杀」的 Windows Job Object：app 进程无论是崩溃、被任务管理器强杀还是断电，后端都会跟着一起结束；后端同时会盯着 app 进程（`--parent_pid`），app 一消失就自己退出。
+- 关窗时会先请求后端优雅退出，最多等 3 秒，实在不退才强杀。以前是无条件强杀，后端来不及收尾，而且每次启动都会在 `%TEMP%` 留下一个约 200MB 的解压目录。
+- app 运行期间后端意外退出会自动重启（1s/2s/4s 退避，最多 3 次）。
+- 桌面版后端的解压目录改为固定缓存路径（`{CACHE_DIR}/iib_api_server`），不再每次启动都解压到新的 `%TEMP%/onefile_{PID}_{TIME}_{RANDOM}`：约 200MB 的自解压只付一次，之后直接复用。以上都会写进启动时间线日志。
+
+### 🐛 启动：等待提示、每日备份延后、耗时日志
+- 桌面版等待内置后端就绪时会显示「正在启动本地服务…」和已等待秒数，不再只是静默的骨架屏（首次启动要自解压一个约 50MB 的 onefile 程序，通常 5–10 秒）。
+- 每日数据库备份延后 `IIB_DB_FILE_BACKUP_DELAY` 秒（默认 30）执行，不再和冷启动抢磁盘 I/O；仍在后台线程里用 SQLite 在线备份接口取一致性快照。
+- 增加启动时间线日志：`iib_api_server.log` 里的 `[TIMELINE]` 行（毫秒时间戳，覆盖 tauri 壳 / sidecar / 前端 `fe_event` 三端），方便量化冷启动各阶段耗时。
+
+## 2026-10-08
+### 🐛 修复桌面版首次打开误报"发生了个错误"
+桌面版 webview 一就绪就会发启动请求，此时自带的后端（onefile 自解压程序）可能还没监听端口，请求拿不到任何 HTTP 响应，前端于是弹出通用的"发生了个错误"。当天第一次打开时最明显：后端还要先整库复制一份几百 MB 的数据库备份，才会开始监听。
+- 启动请求现在会先等后端能响应：探活每 500ms 重试一次、最多等 60 秒，等待期间不再弹错误提示。
+- 每日数据库备份改为后台线程执行，并使用 SQLite 在线备份接口做一致性快照，不再阻塞端口监听；每天一次、文件命名、保留份数等逻辑不变。
+
+## 2026-10-04
+### ✨ 更多文件类型支持统一预览
+点击非图片/视频/音频的文件不再毫无反应，而是打开同一个预览弹窗。文本类文件（json、txt、md、yaml、csv、代码等）从已有的 `/file` 接口读取后按文本展示：JSON 自动格式化，GBK / UTF-16 等非 UTF-8 编码会尝试解码，并且只读取前 512KB，避免超大文件卡住浏览器。PDF 用内置阅读器打开，SVG/ICO 直接内联展示；无法识别的类型则回退到带「下载」和「使用默认应用打开」的弹窗。文件卡片还增加了按类型区分的图标、悬停「预览」提示和手型光标，能一眼看出哪些文件可以打开。
+
+### ⏱️ 文件卡片显示视频时长
+视频文件现在会在封面左下角显示加粗的时长角标（类似播放器的时间胶囊），视频播放弹窗里也会显示。时长由浏览器懒加载，按文件缓存、最多 3 个并发，并做了延迟触发，快速滚动时不会打请求。浏览器无法解码的格式（mkv/avi/flv）就不显示。
+
+### 🏷️ 模糊搜索支持标签筛选（AND）
+模糊搜索页的「搜索范围」左边新增标签多选：选中多个标签时只返回同时含有全部标签的文件（AND），并与已有的范围、媒体类型、正则等条件叠加。筛选条件也会一起存进搜索历史。标签选项直接用页面本来就拉到的标签列表，在前端过滤掉 `pos` / `size` 这两类海量标签。
 
 ## 2026-08-21
 ### 🔒 修复 is_path_trusted 的路径穿越问题（CWE-22/CWE-59）
