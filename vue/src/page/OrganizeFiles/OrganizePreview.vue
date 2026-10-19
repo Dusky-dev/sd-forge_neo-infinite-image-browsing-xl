@@ -171,7 +171,7 @@ const getThumbnailUrl = (path: string) => {
 const showImagePreview = (e: MouseEvent, path: string) => {
   // Check if it's an image file
   const ext = path.split('.').pop()?.toLowerCase() || ''
-  const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'svg']
+  const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'svg', 'jxl']
   if (!imageExts.includes(ext)) {
     return
   }
