@@ -70,7 +70,11 @@ def page_cursor_clause(cursor: str, params: List, table="image"):
 class DataBase:
     local = threading.local()
 
-    _initing = False
+    # Schema setup performs CREATE TABLE/INDEX and ALTER TABLE statements.
+    # It must not run for every thread-local connection: those statements can
+    # collide with the background indexer's writes and raise "database is locked".
+    _schema_init_lock = threading.Lock()
+    _schema_initialized_paths = set()
 
     num = 0
 
@@ -93,39 +97,52 @@ class DataBase:
 
     @classmethod
     def init(clz):
-        # 创建连接并打开数据库
-        conn = connect(clz.get_db_file_path())
-        # 后台 worker 与请求线程可能同时写库：遇到锁时最多等待 5s 而不是立刻抛错
-        conn.execute("PRAGMA busy_timeout=5000")
-
-        # # 禁用 WAL 模式，使用传统的 DELETE 日志模式
-        # conn.execute("PRAGMA journal_mode=DELETE")
-
-        def regexp(expr, item):
-            if not isinstance(item, str):
-                return False
-            reg = re.compile(expr, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
-            return reg.search(item) is not None
-
-        conn.create_function("regexp", 2, regexp)
+        # Keep connections thread-local, but initialize/migrate each DB schema
+        # only once in this process. Other threads can then read from their own
+        # connections without trying to acquire SQLite schema write locks.
+        db_path = os.path.abspath(clz.get_db_file_path())
+        conn = connect(db_path)
         try:
-            Folder.create_table(conn)
-            ImageTag.create_table(conn)
-            Tag.create_table(conn)
-            Image.create_table(conn)
-            ExtraPath.create_table(conn)
-            DirCoverCache.create_table(conn)
-            GlobalSetting.create_table(conn)
-            ImageEmbedding.create_table(conn)
-            ImageEmbeddingFail.create_table(conn)
-            TopicTitleCache.create_table(conn)
-            TopicClusterCache.create_table(conn)
-        finally:
-            conn.commit()
-        clz.num += 1
-        if is_dev:
-            print(f"当前连接数{clz.num}")
-        return conn
+            # Give concurrent indexing/cover-cache writes time to complete.
+            conn.execute("PRAGMA busy_timeout=5000")
+
+            def regexp(expr, item):
+                if not isinstance(item, str):
+                    return False
+                reg = re.compile(expr, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+                return reg.search(item) is not None
+
+            conn.create_function("regexp", 2, regexp)
+
+            # Only the first connection for this database performs schema DDL.
+            # Mark it initialized only after a successful commit. If migration
+            # fails, roll back and let a later attempt retry.
+            with clz._schema_init_lock:
+                if db_path not in clz._schema_initialized_paths:
+                    try:
+                        Folder.create_table(conn)
+                        ImageTag.create_table(conn)
+                        Tag.create_table(conn)
+                        Image.create_table(conn)
+                        ExtraPath.create_table(conn)
+                        DirCoverCache.create_table(conn)
+                        GlobalSetting.create_table(conn)
+                        ImageEmbedding.create_table(conn)
+                        ImageEmbeddingFail.create_table(conn)
+                        TopicTitleCache.create_table(conn)
+                        TopicClusterCache.create_table(conn)
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        raise
+                    clz._schema_initialized_paths.add(db_path)
+            clz.num += 1
+            if is_dev:
+                print(f"当前连接数{clz.num}")
+            return conn
+        except Exception:
+            conn.close()
+            raise
 
 
 def commit_with_retry(conn: Connection, retries: int = 5) -> None:
