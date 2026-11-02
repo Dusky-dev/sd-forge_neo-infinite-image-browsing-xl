@@ -1,12 +1,10 @@
 <script lang="ts" setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import fileItemCell from '@/components/FileItem.vue'
-import '@zanllp/vue-virtual-scroller/dist/vue-virtual-scroller.css'
-// @ts-ignore
-import { RecycleScroller } from '@zanllp/vue-virtual-scroller'
-import { toImageUrl } from '@/util/file'
+import { RecycleScroller } from '@/components/recycleScroller'
+import FullscreenPreview from '@/page/fileTransfer/FullscreenPreview.vue'
 import { getDbBasicInfo, getExpiredDirs, getImagesBySubstr, updateImageData, type DataBaseBasicInfo, type Tag, type TagId, SearchBySubstrReq } from '@/api/db'
-import { copy2clipboardI18n,  makeAsyncFunctionSingle, useGlobalEventListen } from '@/util'
+import { copy2clipboardI18n,  makeAsyncFunctionSingle, useGlobalEventListen, globalEvents } from '@/util'
 import fullScreenContextMenu from '@/page/fileTransfer/fullScreenContextMenu.vue'
 import { LeftCircleOutlined, RightCircleOutlined, regex, AimOutlined } from '@/icon'
 import { message } from 'ant-design-vue'
@@ -25,6 +23,16 @@ import { SearchSelect, type SearchSelectConv } from 'vue3-ts-util'
 import { useBackgroundMaintenance } from '@/composables/useBackgroundMaintenance'
 const tagStore = useTagStore()
 const bg = useBackgroundMaintenance()
+
+/**
+ * 索引更新后标签缓存可能已过期：清空缓存并通知各网格立即补拉当前可视区标签。
+ * 不能只 clear 就完事，否则要等用户滚动触发 viewableAreaFilesChange 才会补拉，
+ * 表现为「切回来标签没了，滚一下又好了」。
+ */
+const invalidateTagCache = () => {
+  tagStore.tagMap.clear()
+  globalEvents.emit('tagsInvalidated')
+}
 /** 实验功能开启且后台未报错时，过期交给后台静默处理，不再显示黄色提示/手动更新按钮 */
 const hideExpiredAlert = computed(() => bg.enabled.value && !bg.backgroundFailed.value)
 const showAutoUpdateFeatureTip = useLocalStorage('iib_auto_update_feature_tip_shown', false)
@@ -186,7 +194,7 @@ const onUpdateBtnClick = makeAsyncFunctionSingle(async () => {
   try {
     await updateImageData()
     info.value = await getDbBasicInfo()
-    tagStore.tagMap.clear()
+    invalidateTagCache()
     return info.value
   } finally {
     indexUpdating.value = false
@@ -197,7 +205,7 @@ const onUpdateBtnClick = makeAsyncFunctionSingle(async () => {
 useGlobalEventListen('backgroundMaintenanceUpdated', async () => {
   try {
     info.value = await getDbBasicInfo()
-    tagStore.tagMap.clear()
+    invalidateTagCache()
   } catch (error) {
     // 后台刷新标签失败不打扰用户，下次轮询/进入页面会再拉
   }
@@ -419,7 +427,7 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
         <template v-slot="{ item: file, index: idx }">
           <!-- idx 和file有可能丢失 -->
           <file-item-cell :idx="idx" :file="file" v-model:show-menu-idx="showMenuIdx" @file-item-click="onFileItemClick"
-            :full-screen-preview-image-url="images[previewIdx] ? toImageUrl(images[previewIdx]) : ''"
+            :enable-builtin-preview="false"
             :cell-width="cellWidth" :selected="multiSelectedIdxs.includes(idx)"
             @context-menu-click="onContextMenuClickU" @dragstart="onFileDragStart" @dragend="onFileDragEnd"
             @tiktok-view="(_file, idx) => openTiktokViewWithFiles(images, idx)"
@@ -427,7 +435,7 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
             :seed-change-checked="seedChangeChecked"
             :get-gen-diff="getGenDiff"
             :get-gen-diff-watch-dep="getGenDiffWatchDep"
-            :is-selected-mutil-files="multiSelectedIdxs.length > 1" @preview-visible-change="onPreviewVisibleChange" />
+            :is-selected-mutil-files="multiSelectedIdxs.length > 1" />
         </template>
       </RecycleScroller>
       <div v-if="previewing" class="preview-switch">
@@ -435,6 +443,8 @@ const { onClearAllSelected, onSelectAll, onReverseSelect } = useKeepMultiSelect(
         <RightCircleOutlined @click="previewImgMove('next')" :class="{ disable: !canPreview('next') }" />
       </div>
     </ASpin>
+    <FullscreenPreview :files="images" :preview-idx="previewIdx" :previewing="previewing"
+      @visible-change="onPreviewVisibleChange" />
     <fullScreenContextMenu v-if="previewing && images && images[previewIdx]" :file="images[previewIdx]"
       :idx="previewIdx" @context-menu-click="onContextMenuClickU" />
   </div>

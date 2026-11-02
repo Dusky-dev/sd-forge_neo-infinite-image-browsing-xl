@@ -37,7 +37,14 @@ export const getTabIdxInSDWebui = () => {
 
 export const switch2IIB = () => {
   try {
-    gradioApp().querySelector('#tabs')!.querySelectorAll('button')[getTabIdxInSDWebui()].click()
+    // 独立运行时没有 gradio 的 #tabs，查不到就什么都不用做（以前这里会抛
+    // Cannot read properties of null (reading 'querySelectorAll')）
+    const tabs = gradioApp().querySelector('#tabs')
+    const buttons = tabs?.querySelectorAll('button')
+    const idx = getTabIdxInSDWebui()
+    if (buttons && idx >= 0) {
+      buttons[idx]?.click()
+    }
   } catch (error) {
     console.error(error)
   }
@@ -111,6 +118,8 @@ export const { useEventListen: useGlobalEventListen, eventEmitter: globalEvents 
     promptEditorUpdated(): void
     /** 后台静默维护完成一轮索引更新（status.version 变化） */
     backgroundMaintenanceUpdated(): void
+    /** 标签缓存已被清空/失效：各网格应立即补拉当前可视区标签，而不是等滚动 */
+    tagsInvalidated(): void
   }>()
 
 type AsyncFunction<T> = (...args: any[]) => Promise<T>
