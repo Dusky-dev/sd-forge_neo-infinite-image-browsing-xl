@@ -10,6 +10,7 @@ import threading
 import time
 
 from scripts.iib.dir_cover_cache import get_top_4_media_info
+from scripts.iib.file_validation import require_regular_file
 from scripts.iib.tool import (
     get_created_date_by_stat,
     get_video_type,
@@ -802,6 +803,9 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
     @app.get(api_base + "/image-thumbnail", dependencies=[Depends(verify_secret)])
     def thumbnail(path: str, t: str, size: str = "256x256"):
         check_path_trust(path)
+        # Directory entries can be as small as an image; never pass them to
+        # FileResponse (including the cached-thumbnail fast path).
+        require_regular_file(path)
         if not cache_base_dir:
             return
         width, height = _parse_thumbnail_size(size)
@@ -920,6 +924,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
     @app.get(api_base + "/stream_video", dependencies=[Depends(verify_secret)])
     async def stream_video(path: str, request: Request):      
         check_path_trust(path)
+        require_regular_file(path)
         import mimetypes
         media_type, _ = mimetypes.guess_type(path)
         return range_requests_response(
@@ -929,13 +934,9 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
     @app.get(api_base + "/video_cover", dependencies=[Depends(verify_secret)])
     async def video_cover(path: str, mt: str):        
         check_path_trust(path)
+        require_regular_file(path)
         if not cache_base_dir:
             return
-        
-        if not os.path.exists(path):
-            raise HTTPException(status_code=404)
-        if not os.path.isfile(path) and get_video_type(path):
-            raise HTTPException(status_code=400, detail=f"{path} is not a video file")
         # 生成缓存文件的路径
         hash_dir = hashlib.md5((path + mt).encode("utf-8")).hexdigest()
         hash = hash_dir
