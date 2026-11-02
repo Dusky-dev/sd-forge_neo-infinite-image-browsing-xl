@@ -1,6 +1,33 @@
 [跳到中文](#中文)
 # English
 
+## 2026-11-01
+### ✨ Fullscreen viewing is no longer interrupted by list refreshes
+While an image is open in full screen, a background list refresh (new images written to the folder, polling refresh, coming back to the page, walk mode loading the next batch) could close the preview or switch it to a different image; deleting the viewed image also made the preview flash and reopen.
+- The list keeps refreshing normally, the viewed image stays the same and the preview stays open; it only closes when that image is deleted.
+- Deleting the viewed image now moves the preview straight to the next one, and it only closes when the folder is empty.
+- Fixed while in there: in standalone mode, the "view this image" link logged an error in the console.
+
+## 2026-10-31
+### 🐛 No more "An error occurred" toast on the first desktop launch of the day
+The desktop app sends its first requests as soon as the page is ready, which can be before the local service has started: the console shows connection errors and the "An error occurred" toast occasionally appears.
+- Settings are now loaded after the local service is ready, so the cold start no longer shows that error.
+- The desktop app no longer waits for a WebUI tab that only exists inside WebUI.
+
+## 2026-10-30
+### ⚡ Grid: upstream vue-virtual-scroller 3.x, thumbnail size levels, correct column math
+- Migrated off the `@zanllp/vue-virtual-scroller` fork (2.0.0-beta.7 plus one patch) to upstream `vue-virtual-scroller@^3.0.5`. The fork had been frozen since 2023-01, so it missed the upstream fixes for fast-scroll gaps (#890, fixes #863 / #882), hidden views overlapping the visible ones (#837) and the view re-assignment rewrite (#743) — the first of those is the "blank cell in the middle of the grid" bug that showed up when scrolling quickly.
+- Adapted to the rewritten composition-API scroller: the internal `$_startIndex` / `$_endIndex` fields are no longer exposed, so the render window is derived from the exposed `visiblePool` instead.
+- Fixed the grid being one column too wide. The column count now comes from the scroller's own content box (padding and vertical scrollbar excluded) instead of the outer container. v3 sizes the item wrapper to `columns × stride`, so the old math surfaced as the rightmost column being pushed out of view plus a horizontal scrollbar. `gridView` and `batchDownload` also never bound the shared `scroller` ref, which the new measurement depends on.
+- Thumbnail size is picked with an 8-step slider (geometrically spaced 64–1024, roughly 16/12/8/6/4/3/2/1 columns) instead of a pixel input. The slider only chooses a target width; the actual cell width auto-fits the row (integer stride, leftover smaller than the column count in px). It applies on release, so dragging does not re-lay-out the visible window on every tick.
+- Existing `defaultGridCellWidth` values snap to the nearest level, so no migration is needed and the persisted key is unchanged.
+
+### ⚡ Folder listing: stop stat-ing every file twice in `GET /files`
+- `GET /files` called `os.path.exists()` on every entry before reading its stat, i.e. a full extra `os.stat()` per file on top of the `scandir` enumeration that had already returned the metadata. On Windows a fresh `os.stat()` opens a file handle (~70 µs per call on a machine with a filesystem filter driver, versus ~0.03 µs for `DirEntry.stat()` which is served from the scandir buffer), so a 6.9k-image folder spent ~0.5 s of pure overhead. The guard is now a `try/except OSError` around the `DirEntry` stat, which keeps the "file deleted mid-iteration" behaviour without the extra syscall.
+- `is_file()` / `is_dir()` are evaluated from that same cached stat, and `os.scandir()` is used as a context manager so the directory handle is closed right away instead of whenever the GC gets to it.
+- The endpoint is now a plain `def`, so FastAPI runs it in the threadpool: scanning a large folder no longer blocks the event loop, and thumbnail / image requests keep flowing during the scan.
+- Measured on a 6,932-file folder: the listing loop dropped from 705 ms to 110 ms and the endpoint from ~1.2–1.6 s to ~0.4 s, with byte-identical JSON output. Linux/macOS still save one syscall per entry (`exists` + `stat` becomes a single `fstatat`); no behaviour change on any platform.
+
 ## 2026-10-18
 ### ✨ Experimental: silent background maintenance (index + thumbnail warm-up)
 - New experimental feature, **off by default**. A banner on the start page opens a modal with two database-persisted switches: silent index update and silent thumbnail warm-up (the latter requires the former). The config lives in the `global_setting` table, so it is shared between the desktop app and the WebUI extension.
@@ -899,6 +926,33 @@ Triggered under the same circumstances as above, there will be a button to updat
 
 
 # 中文
+
+## 2026-11-01
+### ✨ 全屏查看不再被列表刷新打断
+全屏看图时，列表在后台刷新（目录里写入了新图片、轮询刷新、切回页面、walk 模式加载下一批）会关闭预览或把它切到别的图；删除正在查看的图片时，预览也会闪一下再重新打开。
+- 现在列表照常刷新，正在查看的图片保持不变、预览也不会关闭；只有这张图被删掉时才关闭。
+- 删除正在查看的图片后，预览会直接顺到下一张，删到目录为空才关闭。
+- 顺带修复独立运行时通过「查看这张图」链接打开图片会在控制台报错的问题。
+
+## 2026-10-31
+### 🐛 桌面版当天第一次打开不再弹「发生了个错误」
+桌面版当天第一次打开时，本地服务还在启动，界面却已经先发出了请求，控制台出现连接失败，偶尔还会弹出「发生了个错误」。
+- 现在界面会等本地服务就绪后再加载配置，冷启动不再出现该报错。
+- 桌面版不再等待 WebUI 里才有的标签页。
+
+## 2026-10-30
+### ⚡ 网格：切回上游 vue-virtual-scroller 3.x、缩略图档位、列数计算修正
+- 从 `@zanllp/vue-virtual-scroller`（2.0.0-beta.7 + 一个补丁）迁回上游 `vue-virtual-scroller@^3.0.5`。该 fork 停更于 2023-01，缺少上游对快速滚动空洞（#890，修复 #863 / #882）、隐藏 view 遮挡可见内容（#837）以及 view 分配重写（#743）的修复——其中第一条正是快速滚动时「网格中间空一格」那个 bug。
+- 适配重写后的组合式实现：内部字段 `$_startIndex` / `$_endIndex` 不再暴露，渲染窗口改由 expose 出来的 `visiblePool` 推算。
+- 修正「网格多算一列」：列数改为按 scroller 自身内容盒宽度计算（扣掉 padding 与竖向滚动条），不再使用外层容器宽度。v3 会把包装层撑到「列数 × 步长」，旧算法表现为最右一列被挤出可视区并出现横向滚动条。顺带补上 `gridView` / `batchDownload` 未绑定共享 `scroller` ref 的遗漏（新的测量依赖它）。
+- 缩略图尺寸从像素输入改成 8 档滑块（64~1024 几何分布，约合 16/12/8/6/4/3/2/1 列）：滑块只选目标宽度，实际格宽按整行 auto-fit（整数步长，右侧余量小于列数 px）。松手才应用，避免拖动过程中反复重排可见区域。
+- 旧的 `defaultGridCellWidth` 像素值会自动吸附到最近档位，无需迁移，持久化 key 不变。
+
+### ⚡ 目录列表：`GET /files` 不再对每个文件多 stat 一次
+- `GET /files` 在读取每个条目的 stat 之前还会调一次 `os.path.exists()`，等于在 `scandir` 已经批量返回元数据之后，又逐个补一次完整的 `os.stat()`。Windows 上一次 `os.stat()` 要打开文件句柄（装有文件系统过滤驱动时本机实测 ~70μs，而 `DirEntry.stat()` 直接复用 scandir 读回的数据，只要 ~0.03μs），6932 个文件的目录因此白花约 0.5s。现在改为直接复用 `DirEntry.stat()`，用 `try/except OSError` 保留「迭代期间文件被删就跳过」的语义，不再多发系统调用。
+- `is_file()` / `is_dir()` 同样复用这份已缓存的 stat；`os.scandir()` 改用 `with` 上下文管理器，目录句柄及时关闭，不再依赖 GC。
+- 端点改成同步 `def`，由 FastAPI 放到线程池执行：大目录扫描期间不再阻塞事件循环，缩略图/图片请求不会被卡住。
+- 6932 个文件的目录实测：列表循环 705ms → 110ms，端点整体约 1.2~1.6s → 约 0.4s，返回 JSON 逐字节一致。Linux/macOS 上收益较小（每个条目由 `exists` + `stat` 两次调用降为一次 `fstatat`），行为无差异。
 
 ## 2026-10-18
 ### ✨ 实验性功能：后台静默维护（索引 + 缩略图预热）

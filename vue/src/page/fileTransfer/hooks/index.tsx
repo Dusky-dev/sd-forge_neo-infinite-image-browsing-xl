@@ -8,13 +8,13 @@ import {
   typedEventEmitter
 } from 'vue3-ts-util'
 import { type FileNodeInfo } from '@/api/files'
-import { sortFiles } from '../fileSort'
+import { computeSortedFiles } from '../sortedFiles'
 import { last, range } from 'lodash-es'
 import * as Path from '@/util/path'
-import { isImageFile, isVideoFile, isAudioFile } from '@/util/file'
 import { useTagStore } from '@/store/useTagStore'
 import { useBatchDownloadStore } from '@/store/useBatchDownloadStore'
 import { Walker } from '../walker'
+import { getVisibleRange } from '@/util/scroller'
 
 export const stackCache = new Map<string, Page[]>()
 
@@ -40,8 +40,13 @@ export * from './useGenInfoDiff'
 
 
 export interface Scroller {
-  $_startIndex: number
-  $_endIndex: number
+  /**
+   * vue-virtual-scroller v3 暴露的「已分配 view」列表（按 nr.index 排序）。
+   * 用于推算当前渲染窗口范围，替代 v2 时代的内部字段 $_startIndex / $_endIndex。
+   */
+  visiblePool?: Array<{ nr: { index: number, used: boolean } }>
+  /** v3 expose 出来的根元素（用于实测内容盒宽度算列数） */
+  el?: HTMLElement
   scrollToItem (idx: number): void
 }
 
@@ -86,28 +91,13 @@ export const { useHookShareState } = createTypedShareStateHook(
       if (!currPage.value) {
         return []
       }
-      const files = currPage.value?.files ?? []
-      const method = sortMethod.value
-      const filter = (files: FileNodeInfo[]) => {
-        const filterTypes = global.fileTypeFilter
-        // 如果选择了 'all'，显示所有文件
-        if (filterTypes.includes('all')) {
-          return files
-        }
-        // 如果没有选择任何类型，显示所有文件
-        if (filterTypes.length === 0) {
-          return files
-        }
-        // 根据选择的类型过滤
-        return files.filter((file) => {
-          if (file.type === 'dir') return true // 始终显示文件夹
-          if (filterTypes.includes('image') && isImageFile(file.name)) return true
-          if (filterTypes.includes('video') && isVideoFile(file.name)) return true
-          if (filterTypes.includes('audio') && isAudioFile(file.name)) return true
-          return false
-        })
-      }
-      return sortFiles(filter(files), method).filter(v => !deletedFiles.has(v.fullpath))
+      // 过滤/排序逻辑与 useLocation 的「预览是否还能存活」判断共用一份实现
+      return computeSortedFiles(
+        currPage.value.files ?? [],
+        sortMethod.value,
+        global.fileTypeFilter,
+        deletedFiles
+      )
     })
     const multiSelectedIdxs = ref([] as number[])
     const previewIdx = ref(-1)
@@ -139,9 +129,9 @@ export const { useHookShareState } = createTypedShareStateHook(
     const getViewableAreaFiles = () => {
       const s = scroller.value
       if (s) {
-        const startIdx = Math.max(s.$_startIndex - 10, 0)
-        // console.log('area change',  startIdx, s.$_endIndex + 10)
-        return sortedFiles.value.slice(startIdx, s.$_endIndex + 10)
+        const { start, end } = getVisibleRange(s)
+        const startIdx = Math.max(start - 10, 0)
+        return sortedFiles.value.slice(startIdx, end + 10)
       }
       return []
     }

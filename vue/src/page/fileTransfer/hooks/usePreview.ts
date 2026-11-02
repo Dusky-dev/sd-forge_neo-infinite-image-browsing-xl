@@ -2,8 +2,8 @@ import { t } from '@/i18n'
 import { isImageFile } from '@/util'
 import { message } from 'ant-design-vue'
 import { useWatchDocument } from 'vue3-ts-util'
-import { useHookShareState, useEventListen } from '.'
-import { closeImageFullscreenPreview } from '@/util/imagePreviewOperation'
+import { useHookShareState } from '.'
+import { isIndexInVisibleRange } from '@/util/scroller'
 
 /**
  * 全屏查看
@@ -20,7 +20,6 @@ export function usePreview (spec?: { loadNext?: () => void }) {
     scroller,
     props
   } = useHookShareState().toRefs()
-  const { state } = useHookShareState()
   let waitScrollTo = null as number | null
   const onPreviewVisibleChange = (v: boolean, lv: boolean) => {
     previewing.value = v
@@ -34,7 +33,7 @@ export function usePreview (spec?: { loadNext?: () => void }) {
   const scrollToIndex = (idx: number) => {
     const s = scroller.value
     if (!s || idx < 0) return
-    if (!(idx >= s.$_startIndex && idx <= s.$_endIndex)) {
+    if (!isIndexInVisibleRange(s, idx)) {
       s.scrollToItem(idx)
     } else {
       console.log('scrollToIndex already in view', idx, 's', s)
@@ -82,7 +81,7 @@ export function usePreview (spec?: { loadNext?: () => void }) {
       if (isImageFile(files.value[next]?.name) ?? '') {
         previewIdx.value = next
         const s = scroller.value
-        if (s && !(next >= s.$_startIndex && next <= s.$_endIndex)) {
+        if (s && !isIndexInVisibleRange(s, next)) {
           waitScrollTo = next // 关闭预览时滚动过去
         }
       }
@@ -105,7 +104,7 @@ export function usePreview (spec?: { loadNext?: () => void }) {
     if (isImageFile(files.value[next]?.name) ?? '') {
       previewIdx.value = next
       const s = scroller.value
-      if (s && !(next >= s.$_startIndex && next <= s.$_endIndex)) {
+      if (s && !isIndexInVisibleRange(s, next)) {
         waitScrollTo = next // 关闭预览时滚动过去
       }
     }
@@ -126,12 +125,6 @@ export function usePreview (spec?: { loadNext?: () => void }) {
     }
     return isImageFile(files.value[next]?.name)
   }
-
-  useEventListen('removeFiles', async () => {
-    if (previewing.value && !state.sortedFiles[previewIdx.value]) {
-      closeImageFullscreenPreview()
-    }
-  })
 
   return {
     previewIdx,

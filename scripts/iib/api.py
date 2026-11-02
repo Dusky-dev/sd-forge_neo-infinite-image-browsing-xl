@@ -52,6 +52,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from PIL import Image
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import hashlib
 from contextlib import closing
 from scripts.iib.db.datamodel import (
@@ -93,6 +95,8 @@ except Exception as e:
 
 import requests
 import dotenv
+
+
 
 # 加载环境变量
 dotenv.load_dotenv()
@@ -226,6 +230,21 @@ DEFAULT_BASE = "/infinite_image_browsing"
 _timeline_mem = {"first_request_logged": False}
 
 
+def _register_middleware(app: FastAPI, middleware_class, **options):
+    """Support WebUI's app_started callback as well as standalone startup."""
+    if app.middleware_stack is None:
+        app.add_middleware(middleware_class, **options)
+        return
+
+    # Gradio is already serving by the time WebUI calls us. Wrap its live stack
+    # rather than clearing/rebuilding it, which would recreate host middleware.
+    # Keep the declaration too, in case the host later rebuilds the stack.
+    middleware = Middleware(middleware_class, **options)
+    stack = middleware_class(app.middleware_stack, **options)
+    app.user_middleware.insert(0, middleware)
+    app.middleware_stack = stack
+
+
 def infinite_image_browsing_api(app: FastAPI, **kwargs):
     tlog("api_build_start")
 
@@ -277,7 +296,6 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
             return JSONResponse(
                 status_code=500, content={"message": "Internal Server Error"}
             )
-        @app.middleware("http")
         async def log_requests(request: Request, call_next):
             path = request.url.path
             if (
@@ -306,9 +324,11 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                     f"An exception occurred while processing {request.method} {request.url}: {exc}"
                 )
 
+        _register_middleware(app, BaseHTTPMiddleware, dispatch=log_requests)
     
     if kwargs.get("allow_cors"):
-        app.add_middleware(
+        _register_middleware(
+            app,
             CORSMiddleware,
             allow_origin_regex=r"^[\w./:-]+$",
             allow_methods=["*"],
@@ -703,7 +723,9 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         return {"errors": errors}
 
     @app.get(api_base + "/files", dependencies=[Depends(verify_secret)])
-    async def get_target_folder_files(folder_path: str):
+    def get_target_folder_files(folder_path: str):
+        # 注意：这里刻意用同步 def（FastAPI 会放到线程池执行），避免大目录扫描
+        # 阻塞事件循环、拖慢同进程的缩略图等并发请求。
         files: List[FileInfoDict] = []
         try:
             if is_win and folder_path == "/":
@@ -716,43 +738,52 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                     return {"files": []}
                 folder_path = to_abs_path(folder_path)
                 check_path_trust(folder_path)
-                folder_listing: List[os.DirEntry] = os.scandir(folder_path)
                 is_under_scanned_path = is_path_under_parents(folder_path)
-                for item in folder_listing:
-                    if not os.path.exists(item.path):
-                        continue
-                    fullpath = os.path.normpath(item.path)
-                    name = os.path.basename(item.path)
-                    stat = item.stat()
-                    date = get_formatted_date(stat.st_mtime)
-                    created_time = get_created_date_by_stat(stat)
-                    if item.is_file():
-                        bytes = stat.st_size
-                        size = human_readable_size(bytes)
-                        files.append(
-                            {
-                                "type": "file",
-                                "date": date,
-                                "size": size,
-                                "name": name,
-                                "bytes": bytes,
-                                "created_time": created_time,
-                                "fullpath": fullpath,
-                                "is_under_scanned_path": is_under_scanned_path,
-                            }
-                        )
-                    elif item.is_dir():
-                        files.append(
-                            {
-                                "type": "dir",
-                                "date": date,
-                                "created_time": created_time,
-                                "size": "-",
-                                "name": name,
-                                "is_under_scanned_path": is_under_scanned_path,
-                                "fullpath": fullpath,
-                            }
-                        )
+                # scandir 一次批量枚举就把每个条目的名字/大小/时间读回来了，
+                # DirEntry 的 stat()/is_file()/is_dir() 在 Windows 上直接复用这份数据，
+                # 不额外发系统调用。旧实现对每个文件调一次 os.path.exists()，等于把
+                # "1 次目录枚举" 退化成 "N 次完整 stat"（Windows 上单次 ~70us，
+                # 7000 个文件的目录白花 ~0.5s），这里改成复用 DirEntry + OSError 兜底。
+                with os.scandir(folder_path) as folder_listing:
+                    for item in folder_listing:
+                        try:
+                            stat = item.stat()
+                            is_file = item.is_file()
+                            is_dir = item.is_dir()
+                        except OSError:
+                            # 迭代期间被删除/不可访问：跳过，与原 os.path.exists() 判断等价
+                            continue
+                        fullpath = os.path.normpath(item.path)
+                        name = item.name
+                        date = get_formatted_date(stat.st_mtime)
+                        created_time = get_created_date_by_stat(stat)
+                        if is_file:
+                            bytes = stat.st_size
+                            size = human_readable_size(bytes)
+                            files.append(
+                                {
+                                    "type": "file",
+                                    "date": date,
+                                    "size": size,
+                                    "name": name,
+                                    "bytes": bytes,
+                                    "created_time": created_time,
+                                    "fullpath": fullpath,
+                                    "is_under_scanned_path": is_under_scanned_path,
+                                }
+                            )
+                        elif is_dir:
+                            files.append(
+                                {
+                                    "type": "dir",
+                                    "date": date,
+                                    "created_time": created_time,
+                                    "size": "-",
+                                    "name": name,
+                                    "is_under_scanned_path": is_under_scanned_path,
+                                    "fullpath": fullpath,
+                                }
+                            )
         except Exception as e:
             # logger.error(e)
             raise HTTPException(status_code=400, detail=str(e))
@@ -1313,6 +1344,46 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         return res
 
     db_api_base = api_base + "/db"
+
+    class ImportUserDataReq(BaseModel):
+        data: dict
+        mode: str = "merge"
+        dry_run: bool = False
+
+    @app.get(db_api_base + "/export_user_data", dependencies=[Depends(verify_secret)])
+    async def export_user_data():
+        """导出用户数据（收藏/标签/扫描路径/设置/手改 prompt），不含图片索引与 AI 向量。"""
+        from starlette.concurrency import run_in_threadpool
+        from scripts.iib.userdata import export_user_data as _export
+
+        try:
+            return await run_in_threadpool(lambda: _export(DataBase.get_conn()))
+        except Exception as e:
+            logger.error("export_user_data failed: %s", e, stack_info=True)
+            raise HTTPException(status_code=500, detail=f"export failed: {e}")
+
+    @app.post(
+        db_api_base + "/import_user_data",
+        dependencies=[Depends(verify_secret), Depends(write_permission_required)],
+    )
+    async def import_user_data(req: ImportUserDataReq):
+        """合并导入用户数据；dry_run=true 时只回传统计、不写库。"""
+        from starlette.concurrency import run_in_threadpool
+        from scripts.iib.userdata import import_user_data as _import
+        from scripts.iib.userdata import UserDataError
+
+        def _run():
+            return _import(
+                DataBase.get_conn(), req.data, mode=req.mode, dry_run=req.dry_run
+            )
+
+        try:
+            return await run_in_threadpool(_run)
+        except UserDataError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error("import_user_data failed: %s", e, stack_info=True)
+            raise HTTPException(status_code=500, detail=f"import failed: {e}")
 
     def get_expired_dirs_cached() -> List[str]:
         """过期目录：优先用 worker 的 15s 缓存（避免每次 1w+ 目录全量 stat）。"""
