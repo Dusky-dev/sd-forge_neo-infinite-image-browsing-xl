@@ -152,8 +152,20 @@ export const getImageSelectedCustomTag = async (path: string) => {
 }
 
 
-export const getRandomImages = async () => {
-  const resp = await axiosInst.value.get('/db/random_images')
+export interface ModelCheckpoint {
+  name: string
+  count: number
+}
+
+export const getModelCheckpoints = async () => {
+  const resp = await axiosInst.value.get('/db/model_checkpoints')
+  return resp.data as ModelCheckpoint[]
+}
+
+export const getRandomImages = async (checkpoint?: string) => {
+  const resp = await axiosInst.value.get('/db/random_images', {
+    params: checkpoint ? { checkpoint } : {}
+  })
   return resp.data as FileNodeInfo[]
 }
 

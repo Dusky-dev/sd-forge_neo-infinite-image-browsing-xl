@@ -438,14 +438,34 @@ class Image:
         return images, api_cur
     
     @classmethod
-    def get_random_images(cls, conn: Connection, size: int) -> List["Image"]:
+    def get_random_images(
+        cls, conn: Connection, size: int, checkpoint: Optional[str] = None
+    ) -> List["Image"]:
         if size <= 0:
             return []
-        
+
         images = []
         deleted_ids = []
         with closing(conn.cursor()) as cur:
-            cur.execute("SELECT * FROM image ORDER BY RANDOM() LIMIT ?", (size,))
+            if checkpoint:
+                # Match the indexed generation checkpoint, not arbitrary prompt
+                # text or a filename substring. EXISTS avoids duplicate rows.
+                cur.execute(
+                    """
+                    SELECT image.* FROM image
+                    WHERE EXISTS (
+                        SELECT 1 FROM image_tag
+                        JOIN tag ON tag.id = image_tag.tag_id
+                        WHERE image_tag.image_id = image.id
+                          AND tag.type = 'Model'
+                          AND tag.name = ?
+                    )
+                    ORDER BY RANDOM() LIMIT ?
+                    """,
+                    (checkpoint, size),
+                )
+            else:
+                cur.execute("SELECT * FROM image ORDER BY RANDOM() LIMIT ?", (size,))
             rows = cur.fetchall()
             
             for row in rows:
@@ -935,6 +955,25 @@ class Tag:
             for row in rows:
                 tags.append(cls.from_row(row))
             return tags
+
+    @classmethod
+    def get_model_checkpoints(cls, conn: Connection) -> List[dict]:
+        """Return checkpoints present in the indexed library and their media counts."""
+        with closing(conn.cursor()) as cur:
+            cur.execute(
+                """
+                SELECT tag.name, COUNT(DISTINCT image_tag.image_id)
+                FROM tag
+                JOIN image_tag ON image_tag.tag_id = tag.id
+                WHERE tag.type = 'Model'
+                GROUP BY tag.id, tag.name
+                ORDER BY LOWER(tag.name), tag.name
+                """
+            )
+            return [
+                {"name": name, "count": count}
+                for name, count in cur.fetchall()
+            ]
 
     @classmethod
     def get_all(cls, conn):

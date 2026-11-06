@@ -1,6 +1,10 @@
 import type { IIBI18nMap } from '.'
 
 export const de: Partial<IIBI18nMap> = {
+  randomCheckpointAll: 'Alle Checkpoints',
+  randomCheckpointPlaceholder: 'Checkpoint auswählen',
+  randomCheckpointNoMatch: 'Keine indizierten Medien für diesen Checkpoint. Bitte den Bildindex aktualisieren.',
+  randomIndexRequired: 'Keine indizierten Medien. Zuerst einen Index in der Bildsuche erstellen.',
   blockVisibilitySettings: 'Panel-Einstellungen',
   blockName_actionBar: 'Aktionsschaltflächen',
   blockName_infoTags: 'Datei-Info-Tags',

@@ -1,6 +1,10 @@
 import type { IIBI18nMap } from '.'
 
 export const zhHant: Partial<IIBI18nMap> = {
+  randomCheckpointAll: '所有模型',
+  randomCheckpointPlaceholder: '選擇生成模型',
+  randomCheckpointNoMatch: '該模型沒有已建立索引的媒體，請更新圖片索引',
+  randomIndexRequired: '沒有已建立索引的媒體，請先在圖片搜尋頁面建立索引',
   startingLocalService: '正在啟動本地服務…',
   startingLocalServiceHint: '首次啟動需要解壓內置後端，通常 5–10 秒，請稍候',
   startingLocalServiceElapsed: '已等待 {n} 秒',
