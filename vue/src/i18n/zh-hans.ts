@@ -1,4 +1,8 @@
 export const zhHans = {
+  randomCheckpointAll: '所有模型',
+  randomCheckpointPlaceholder: '选择生成模型',
+  randomCheckpointNoMatch: '该模型没有已索引的媒体文件，请更新图片索引',
+  randomIndexRequired: '没有找到媒体文件，请先在图片搜索页面建立索引',
   startingLocalService: '正在启动本地服务…',
   startingLocalServiceHint: '首次启动需要解压内置后端，通常 5–10 秒，请稍等',
   startingLocalServiceElapsed: '已等待 {n} 秒',

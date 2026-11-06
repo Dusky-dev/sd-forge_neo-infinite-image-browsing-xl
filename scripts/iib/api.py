@@ -1413,10 +1413,15 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
     
     
 
+    @app.get(db_api_base + "/model_checkpoints", dependencies=[Depends(verify_secret)])
+    async def model_checkpoints():
+        # Only indexed Model tags (with associated files) appear in the selector.
+        return Tag.get_model_checkpoints(DataBase.get_conn())
+
     @app.get(db_api_base + "/random_images", dependencies=[Depends(verify_secret)])
-    async def random_image():
+    async def random_image(checkpoint: Optional[str] = None):
         conn = DataBase.get_conn()
-        imgs = DbImg.get_random_images(conn, 128)
+        imgs = DbImg.get_random_images(conn, 128, checkpoint=checkpoint or None)
         return filter_allowed_files([x.to_file_info() for x in imgs])
 
     @app.get(db_api_base + "/expired_dirs", dependencies=[Depends(verify_secret)])

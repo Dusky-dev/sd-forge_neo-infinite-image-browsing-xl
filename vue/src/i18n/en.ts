@@ -1,6 +1,10 @@
 import type { IIBI18nMap } from '.'
 
 export const en: IIBI18nMap = {
+  randomCheckpointAll: 'All checkpoints',
+  randomCheckpointPlaceholder: 'Choose checkpoint',
+  randomCheckpointNoMatch: 'No indexed media for this checkpoint. Try updating the image index.',
+  randomIndexRequired: 'No indexed media. Generate an index on the image search page first.',
   startingLocalService: 'Starting the local service…',
   startingLocalServiceHint: 'The first launch unpacks the bundled backend, which usually takes 5–10 seconds.',
   startingLocalServiceElapsed: 'Waited {n}s',

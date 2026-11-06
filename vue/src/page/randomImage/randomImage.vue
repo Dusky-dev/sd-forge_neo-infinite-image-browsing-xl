@@ -3,9 +3,9 @@ import { RecycleScroller } from '@/components/recycleScroller'
 import FileItem from '@/components/FileItem.vue'
 import { useFileItemActions, useFilesDisplay, useFileTransfer, useHookShareState, useKeepMultiSelect, usePreview } from '@/page/fileTransfer/hook'
 import FullscreenPreview from '@/page/fileTransfer/FullscreenPreview.vue'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { GridViewFile, useGlobalStore } from '@/store/useGlobalStore'
-import { getRandomImages } from '@/api/db'
+import { getRandomImages, getModelCheckpoints } from '@/api/db'
 import { identity } from '@vueuse/core'
 import fullScreenContextMenu from '@/page/fileTransfer/fullScreenContextMenu.vue'
 import { openTiktokViewWithFiles } from '@/util/tiktokHelper'
@@ -28,8 +28,34 @@ defineProps<{
 }>()
 
 const loading = ref(false)
+const checkpointsLoading = ref(false)
+const selectedCheckpoint = useLocalStorage(`${prefix}randomImageCheckpoint`, '')
+const checkpointOptions = ref<{ value: string; label: string }[]>([
+  { value: '', label: t('randomCheckpointAll') }
+])
 const files = ref([] as GridViewFile[])
 const images = files
+
+let ready = false
+let requestId = 0
+
+const loadCheckpoints = async () => {
+  checkpointsLoading.value = true
+  try {
+    const checkpoints = await getModelCheckpoints()
+    checkpointOptions.value = [
+      { value: '', label: t('randomCheckpointAll') },
+      ...checkpoints.map(({ name, count }) => ({ value: name, label: `${name} (${count})` }))
+    ]
+    // If the index has been rebuilt and a saved model no longer exists,
+    // return to all checkpoints instead of leaving an unusable filter.
+    if (selectedCheckpoint.value && !checkpoints.some(({ name }) => name === selectedCheckpoint.value)) {
+      selectedCheckpoint.value = ''
+    }
+  } finally {
+    checkpointsLoading.value = false
+  }
+}
 
 // 使用VueUse的useLocalStorage hook
 const hasShownNotification = useLocalStorage(`${prefix}randomImageSettingNotificationShown`, false)
@@ -47,18 +73,27 @@ const showRandomImageSettingNotification = () => {
 }
 
 const fetch = async () => {
+  const currentRequest = ++requestId
   try {
     loading.value = true
-    const res = await getRandomImages()
+    const res = await getRandomImages(selectedCheckpoint.value || undefined)
+    // Ignore slow responses for a previously selected checkpoint.
+    if (currentRequest !== requestId) return
     if (res.length === 0) {
-      message.warn('No data, please generate index in image search page first')
+      message.warn(t(selectedCheckpoint.value ? 'randomCheckpointNoMatch' : 'randomIndexRequired'))
     }
     files.value = res
   } finally {
-    loading.value = false
-    onScroll()
+    if (currentRequest === requestId) {
+      loading.value = false
+      onScroll()
+    }
   }
 }
+
+watch(selectedCheckpoint, () => {
+  if (ready) void fetch()
+})
 
 // TikTok View 按钮点击处理
 const onTiktokViewClick = () => {
@@ -70,11 +105,18 @@ const onTiktokViewClick = () => {
   openTiktokViewWithFiles(files.value, previewIdx.value || 0)
 }
 
-onMounted(() => {
-  fetch()
+onMounted(async () => {
+  try {
+    await loadCheckpoints()
+  } catch (error) {
+    // Keep unfiltered browsing usable even if the model list fails to load.
+    console.error('Could not load indexed checkpoints', error)
+  }
+  ready = true
+  void fetch()
   setTimeout(() => {
     showRandomImageSettingNotification()
-  }, 2000);
+  }, 2000)
 })
 const { stackViewEl, multiSelectedIdxs, stack, scroller } = useHookShareState({
   images: files as any
@@ -102,6 +144,16 @@ const onContextMenuClickU: typeof onContextMenuClick = async (e, file, idx) => {
     <MultiSelectKeep :show="!!multiSelectedIdxs.length || g.keepMultiSelect" @clear-all-selected="onClearAllSelected"
       @select-all="onSelectAll" @reverse-select="onReverseSelect" />
     <div class="refresh-button">
+      <a-select
+        v-model:value="selectedCheckpoint"
+        :options="checkpointOptions"
+        :loading="checkpointsLoading"
+        :placeholder="$t('randomCheckpointPlaceholder')"
+        :aria-label="$t('randomCheckpointPlaceholder')"
+        option-filter-prop="label"
+        show-search
+        class="checkpoint-select"
+      />
       <a-button 
         @click="fetch" 
         @touchstart.prevent="fetch"
@@ -109,7 +161,7 @@ const onContextMenuClickU: typeof onContextMenuClick = async (e, file, idx) => {
         :loading="loading" 
         shape="round"
       >
-        {{ $t('shuffle') }}
+        {{ $t('tryMyLuck') }}
       </a-button>
       <a-button 
         @click="onTiktokViewClick" 
@@ -176,13 +228,21 @@ const onContextMenuClickU: typeof onContextMenuClick = async (e, file, idx) => {
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 99;
-    background: white;
+    background: var(--zp-primary-background);
     border-radius: 9999px;
     box-shadow: 0 0 20px var(--zp-secondary);
     padding: 4px;
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: calc(100% - 24px);
+  }
+
+  .checkpoint-select {
+    width: 240px;
+    max-width: 70vw;
   }
 
   .file-list {
