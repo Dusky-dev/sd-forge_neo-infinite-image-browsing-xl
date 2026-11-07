@@ -164,12 +164,15 @@ export function useLocation () {
     }
     folderRequestVersion++
     while (idx < stack.value.length - 1) {
-      stack.value.pop()
+      try {
+        stack.value.pop()
+      } catch (error) {
+        console.error('[IIB-NAV DEBUG] POP FAILED', error instanceof Error ? error.stack : error)
+        throw error
+      }
     }
     console.log('[IIB-NAV DEBUG] back AFTER', stack.value.map(p=>p.curr))
   }
-
-  watch(stack, () => console.log('[IIB-NAV DEBUG] STACK MUTATION', stack.value.map(p=>p.curr)), { deep: true, flush: 'sync' })
 
   const backToLastUseTo = () => {
     handleMultiModeTo(Path.getParentDirectory(currLocation.value))
