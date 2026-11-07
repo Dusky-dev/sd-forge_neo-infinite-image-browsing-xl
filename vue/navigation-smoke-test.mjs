@@ -95,7 +95,18 @@ try {
       })
       node = node.parentElement
     }
+    const breadcrumb = document.querySelector('.ant-breadcrumb')?.textContent
+    const view = document.querySelector('.container')?.__vueParentComponent
+    const setup = view?.setupState
+    const state = setup ? {
+      location: String(setup.currLocation ?? '?'),
+      stack: Array.from(setup.stack ?? []).map(p => ({ curr: p.curr, len: p.files?.length })),
+      sortedLen: setup.sortedFiles?.length,
+      sortedFirst: setup.sortedFiles?.slice?.(0,3)?.map?.(x=>x.name),
+      preview: setup.previewing
+    } : {keys:Object.keys(view ?? {})}
     return {
+      breadcrumb, state,
       scroller: scroller ? {
         scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight,
         clientHeight: scroller.clientHeight, clientWidth: scroller.clientWidth,
