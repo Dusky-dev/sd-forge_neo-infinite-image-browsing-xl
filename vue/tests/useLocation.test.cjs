@@ -264,18 +264,24 @@ test('manual refresh still fetches and reports completion', async () => {
 
 // ---- Folder browsing: navigation must refresh the virtual scroll window ----
 
+// The folder-change watcher flushes after render and then awaits nextTick()
+// before reaching the newly mounted RecycleScroller. Let those two phases run
+// before checking the scroll-restoration side effects.
+const settleFolderNavigation = async () => {
+  await vue.nextTick()
+  await new Promise(resolve => setImmediate(resolve))
+}
+
 test('scanned-fixed sibling navigation resets the scroller even with constant stack depth', async () => {
   const c = setup({ mode: 'scanned-fixed' })
   c.state.stack.value = [{ curr: '/images', files: oldFiles, scrollIndex: 42 }]
   c.state.currLocation.value = '/images/start'
-  await vue.nextTick()
-  await vue.nextTick()
+  await settleFolderNavigation()
   c.scrollPositions.length = 0
 
   c.state.stack.value = [{ curr: '/images/next', files: newFiles }]
   c.state.currLocation.value = '/images/next'
-  await vue.nextTick()
-  await vue.nextTick()
+  await settleFolderNavigation()
 
   assert.equal(c.state.stack.value.length, 1)
   assert.deepEqual(c.scrollPositions, [0])
@@ -288,14 +294,12 @@ test('breadcrumb navigation restores the saved scroll position in the parent dir
     { curr: 'images', files: oldFiles, scrollIndex: 74 }
   ]
   c.state.currLocation.value = '/images'
-  await vue.nextTick()
-  await vue.nextTick()
+  await settleFolderNavigation()
   c.scrollPositions.length = 0
 
   c.state.stack.value.pop()
   c.state.currLocation.value = '/'
-  await vue.nextTick()
-  await vue.nextTick()
+  await settleFolderNavigation()
 
   assert.deepEqual(c.scrollPositions, [8])
 })
