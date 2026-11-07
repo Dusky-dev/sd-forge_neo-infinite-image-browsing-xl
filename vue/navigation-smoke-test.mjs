@@ -77,7 +77,43 @@ try {
   // Breadcrumb click back to pictures must render the folder contents again.
   const crumb = page.locator('.ant-breadcrumb').getByText('pictures').first()
   await crumb.click()
-  await albumNode.waitFor({ state: 'visible', timeout: 8000 })
+  await page.waitForTimeout(400)
+  const diagnostic = await page.evaluate(() => {
+    const scroller = document.querySelector('.file-list.vue-recycle-scroller')
+    const cards = Array.from(document.querySelectorAll('li.file-item-trigger'))
+    const album = cards.find(el => el.textContent?.includes('album'))
+    const ancestors = []
+    let node = album
+    while (node && node !== document.body && ancestors.length < 8) {
+      const css = getComputedStyle(node)
+      const rect = node.getBoundingClientRect()
+      ancestors.push({
+        tag: node.tagName, class: String(node.className).slice(0,160),
+        display: css.display, visibility: css.visibility,
+        width: rect.width, height: rect.height, y: rect.y,
+        transform: css.transform, opacity: css.opacity
+      })
+      node = node.parentElement
+    }
+    return {
+      scroller: scroller ? {
+        scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight,
+        clientHeight: scroller.clientHeight, clientWidth: scroller.clientWidth,
+        style: scroller.getAttribute('style')
+      } : null,
+      views: Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'))
+        .slice(0, 10).map(el => ({
+          style: el.getAttribute('style'), text: el.textContent?.slice(0,70),
+          height: el.getBoundingClientRect().height,
+          display: getComputedStyle(el).display
+        })),
+      albumAncestors: ancestors,
+      albumMatches: cards.filter(x => x.textContent?.includes('album')).length,
+      cards: cards.length
+    }
+  })
+  log('back-navigation diagnostic:', JSON.stringify(diagnostic))
+  await albumNode.waitFor({ state: 'visible', timeout: 4000 })
   log('SUCCESS breadcrumb back renders the previous folder in one click')
   if (errors.length) log('browser console warnings/errors:', errors.slice(0,12))
 } catch (error) {
