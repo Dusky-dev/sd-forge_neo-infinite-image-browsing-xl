@@ -6,7 +6,7 @@ import { DatabaseOutlined } from '@/icon'
 import { TagSearchTabPane, FuzzySearchTabPane, FileTransferTabPane, EmptyStartTabPane } from '@/store/useGlobalStore'
 import { copy2clipboardI18n, makeAsyncFunctionSingle, useGlobalEventListen } from '@/util'
 import { message, Modal } from 'ant-design-vue'
-import { ref, watch, onMounted, h, computed, onUnmounted } from 'vue'
+import { ref, watch, onMounted, h, computed, onUnmounted, nextTick } from 'vue'
 import { delay, ok, Task, useWatchDocument } from 'vue3-ts-util'
 import { useHookShareState, stackCache, global } from '.'
 import NumInput from '@/components/numInput.vue'
@@ -45,19 +45,19 @@ export function useLocation () {
     sortMethod
   } = useHookShareState().toRefs()
 
+  // Folder navigation can change the current path without changing stack
+  // depth (for example two siblings, or any scanned-fixed navigation).
+  // The scroller is keyed by currLocation in stackView.vue, so wait for Vue to
+  // mount that folder's fresh recycler before restoring its saved position.
   watch(
-    () => stack.value.length,
-    debounce((v, lv) => {
-      if (v === lv) {
-        return
-      }
-      if (v > lv) {
-        scroller.value?.scrollToItem(0)
-        return
-      }
-      const target = last(stack.value)?.scrollIndex ?? 0
-      delay(0).then(() => scroller.value?.scrollToItem(target))
-    }, 300)
+    currLocation,
+    async (location) => {
+      await nextTick()
+      // Ignore stale callbacks from rapid breadcrumb/address-bar navigation.
+      if (currLocation.value !== location) return
+      scroller.value?.scrollToItem(last(stack.value)?.scrollIndex ?? 0)
+    },
+    { flush: 'post' }
   )
   onMounted(async () => {
     if (!stack.value.length) {
