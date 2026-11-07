@@ -75,9 +75,23 @@ try {
   if (requests.filter(x => x === '/pictures/album').length !== 1) throw new Error('album navigation must issue exactly one API request')
   log('SUCCESS first click shows album contents', { cards: await page.locator('li.file-item-trigger').count(), requests })
   // Breadcrumb click back to pictures must render the folder contents again.
-  const crumb = page.locator('.ant-breadcrumb').getByText('pictures').first()
+  const crumb = page.locator('.ant-breadcrumb a').filter({ hasText: 'pictures' }).first()
+  log('breadcrumb DOM:', await page.locator('.ant-breadcrumb').evaluate(x => x.outerHTML.slice(0, 2400)))
+  log('clicked anchor:', await crumb.evaluate(x => x.outerHTML))
+  await page.evaluate(() => {
+    window.__breadcrumbClicks = []
+    const target = Array.from(document.querySelectorAll('.ant-breadcrumb a')).find(x => x.textContent?.includes('pictures'))
+    target?.addEventListener('click', e => window.__breadcrumbClicks.push({ target: e.target?.tagName, phase: e.eventPhase }))
+  })
   await crumb.click()
   await page.waitForTimeout(400)
+  log('breadcrumb after first click:', await page.locator('.ant-breadcrumb').innerText(),
+    'events:', await page.evaluate(() => window.__breadcrumbClicks))
+  if ((await page.locator('.ant-breadcrumb').innerText()).includes('album')) {
+    await crumb.click()
+    await page.waitForTimeout(400)
+    log('breadcrumb after SECOND click:', await page.locator('.ant-breadcrumb').innerText())
+  }
   const diagnostic = await page.evaluate(() => {
     const scroller = document.querySelector('.file-list.vue-recycle-scroller')
     const cards = Array.from(document.querySelectorAll('li.file-item-trigger'))
