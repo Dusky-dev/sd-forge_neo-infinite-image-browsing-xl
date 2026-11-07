@@ -29,8 +29,13 @@ afterEach(() => {
 
 function setup({ mode = 'scanned', previewing = false, fetchFiles, walker } = {}) {
   const scrollPositions = []
+  const gridUpdates = []
   const state = {
-    scroller: vue.ref({ scrollToItem: idx => scrollPositions.push(idx) }),
+    scroller: vue.ref({
+      scrollToItem: idx => scrollPositions.push(idx),
+      scrollToPosition: idx => scrollPositions.push(idx),
+      updateVisibleItems: changed => gridUpdates.push(changed)
+    }),
     stackViewEl: vue.ref(),
     stack: vue.ref([{ curr: '/images', files: oldFiles }]),
     currLocation: vue.ref('/images'),
@@ -84,12 +89,18 @@ function setup({ mode = 'scanned', previewing = false, fetchFiles, walker } = {}
     vue: { ...vue, onMounted() {}, onUnmounted: fn => unmountCallbacks.push(fn) },
     'vue3-ts-util': {
       delay: async () => {},
+      ok: (v, msg) => { if (!v) throw new Error(msg || 'missing value'); return v },
       useWatchDocument() {},
       Task: { run: ({ action }) => { poll = action; return { clearTask() {} } } }
     },
     '.': { useHookShareState: () => ({ toRefs: () => state }), stackCache: { get: () => undefined }, global },
     '@/components/numInput.vue': {},
-    '@/util/path': { normalize: value => value },
+    '@/util/path': {
+      normalize: value => value,
+      isAbsolute: path => path.startsWith('/'),
+      splitPath: path => path.split('/').filter(Boolean),
+      join: (...paths) => paths.filter(Boolean).join('/').replace(/\/+/g, '/')
+    },
     '@/util/scroller': { getVisibleRange: () => ({ start: 0, end: 20 }) },
     'multi-nprogress': {},
     'lodash-es': { last: items => items.at(-1), debounce: () => () => {} },
@@ -112,7 +123,7 @@ function setup({ mode = 'scanned', previewing = false, fetchFiles, walker } = {}
   }
   cleanups.push(unmount)
   return {
-    state, global, events, messages, location, unmount, scrollPositions,
+    state, global, events, messages, location, unmount, scrollPositions, gridUpdates,
     fetchCount: () => fetchCount,
     disableWalkRefresh: () => loadingContent.children[1].props.onClick(),
     returnToIIB: () => listeners.get('returnToIIB')(),
@@ -304,9 +315,124 @@ test('breadcrumb navigation restores the saved scroll position in the parent dir
   assert.deepEqual(c.scrollPositions, [8])
 })
 
-test('directory browser recreates the virtual scroller when its path changes', () => {
+test('directory browser keys recycler by folder path', () => {
   const source = readFileSync(
     join(__dirname, '../src/page/fileTransfer/stackView.vue'), 'utf8'
   )
   assert.match(source, /<RecycleScroller\s+:key="currLocation"/)
+})
+
+
+// ---- Actual file click/async response path: one click must be sufficient ----
+
+test('one folder click loads its files', async () => {
+  const c = setup({ mode: 'scanned-fixed' })
+  await c.location.openNext({
+    type: 'dir', name: 'subfolder', fullpath: '/images/subfolder'
+  })
+  // In the actual browser currLocation is derived from stack, rather than the
+  // independent ref in this isolated composable harness.
+  c.state.currLocation.value = '/images/subfolder'
+  await settleFolderNavigation()
+  assert.equal(c.fetchCount(), 1)
+  assert.equal(c.state.currPage.value.curr, '/images/subfolder')
+  assert.deepEqual(c.state.currPage.value.files, newFiles)
+  assert.deepEqual(c.scrollPositions.slice(-1), [0])
+})
+
+test('two fast clicks on a directory append it only once', async () => {
+  const a = deferred()
+  const b = deferred()
+  const c = setup({
+    fetchFiles: (() => {
+      let calls = 0
+      return () => ++calls === 1 ? a.promise : b.promise
+    })()
+  })
+  const folder = { type: 'dir', fullpath: '/images/subfolder', name: 'subfolder' }
+  const firstClick = c.location.openNext(folder)
+  const secondClick = c.location.openNext(folder)
+  b.resolve({ files: newFiles })
+  await secondClick
+  a.resolve({ files: oldFiles })
+  await firstClick
+  assert.equal(c.fetchCount(), 2)
+  assert.equal(c.state.stack.value.length, 2)
+  assert.deepEqual(c.state.currPage.value.files, newFiles)
+})
+
+test('stale manual refresh may not overwrite folder opened while request was in flight', async () => {
+  const response = deferred()
+  const c = setup({ fetchFiles: () => response.promise })
+  const refreshPromise = c.location.refresh()
+  const newPage = { curr: 'other', files: [{ fullpath: '/other/keep.png', name: 'keep.png' }] }
+  c.state.stack.value.push(newPage)
+  c.state.currLocation.value = '/images/other'
+  response.resolve({ files: newFiles })
+  await refreshPromise
+  assert.equal(c.state.currPage.value.curr, 'other')
+  assert.equal(c.state.currPage.value.files[0].name, 'keep.png')
+})
+
+test('leaving a folder invalidates its in-flight first click', async () => {
+  const response = deferred()
+  const c = setup({ fetchFiles: () => response.promise })
+  const initial = c.state.stack.value.slice()
+  const pending = c.location.openNext({
+    type: 'dir', fullpath: '/images/subfolder', name: 'subfolder'
+  })
+  c.location.back(0)
+  response.resolve({ files: newFiles })
+  await pending
+  assert.equal(c.state.stack.value.length, initial.length)
+  assert.deepEqual(c.state.currPage.value.files, oldFiles)
+})
+
+test('breadcrumb back truncates folder stack atomically for synchronous observers', () => {
+  const c = setup()
+  c.state.stack.value = [
+    { curr: '/', files: [] },
+    { curr: 'pictures', files: [] },
+    { curr: 'album', files: oldFiles }
+  ]
+  const path = vue.computed(() => c.state.stack.value.map(page => {
+    if (!page) throw new Error('transient hole during Array.pop()')
+    return page.curr
+  }).join('/'))
+  const stop = vue.watch(path, () => {}, { flush: 'sync' })
+  try {
+    assert.doesNotThrow(() => c.location.back(1))
+    assert.deepEqual(c.state.stack.value.map(page => page.curr), ['/', 'pictures'])
+  } finally {
+    stop()
+  }
+})
+
+test('address bar switches sibling folders in one atomic directory-stack update', async () => {
+  const c = setup()
+  c.global.conf = { is_win: false, sd_cwd: '/' }
+  const root = { type: 'dir', fullpath: '/pictures', name: 'pictures' }
+  const album = { type: 'dir', fullpath: '/pictures/album', name: 'album' }
+  const sibling = { type: 'dir', fullpath: '/pictures/sibling', name: 'sibling' }
+  c.state.stack.value = [
+    { curr: '/', files: [root] },
+    { curr: 'pictures', files: [album, sibling] },
+    { curr: 'album', files: oldFiles }
+  ]
+  c.state.currLocation.value = '/pictures/album'
+
+  const path = vue.computed(() => c.state.stack.value.map(page => {
+    if (!page) throw new Error('transient hole in directory stack')
+    return page.curr
+  }).join('/'))
+  const stop = vue.watch(path, () => {}, { flush: 'sync' })
+  try {
+    c.location.locInputValue.value = '/pictures/sibling'
+    await assert.doesNotReject(async () => c.location.onLocEditEnter())
+    assert.equal(c.fetchCount(), 1)
+    assert.deepEqual(c.state.stack.value.map(page => page.curr), ['/', 'pictures', 'sibling'])
+    assert.deepEqual(c.state.currPage.value.files, newFiles)
+  } finally {
+    stop()
+  }
 })

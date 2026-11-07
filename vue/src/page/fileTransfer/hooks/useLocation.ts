@@ -116,37 +116,40 @@ export function useLocation () {
 
   const copyLocation = () => copy2clipboardI18n(currLocation.value)
 
+  // Navigating twice quickly must not append the same directory twice, and
+  // a slow older response must not overwrite a newer folder/navigation.
+  let folderRequestVersion = 0
   const openNext = async (file: FileNodeInfo) => {
-    if (file.type !== 'dir') {
-      return
-    }
+    if (file.type !== 'dir') return
+    const version = ++folderRequestVersion
+    const sourcePage = currPage.value
+    const sourceLocation = currLocation.value
     try {
       np.value?.start()
       const { files } = await getTargetFolderFiles(file.fullpath)
-      if (props.value.mode == 'scanned-fixed') {
-        stack.value = [{
-          files,
-          curr: file.fullpath
-        }]
-        // fixed模式下stack.length始终为1，watch不会触发滚动，需要手动滚动到顶部
-        scroller.value?.scrollToItem(0)
+      if (version !== folderRequestVersion ||
+          currPage.value !== sourcePage ||
+          currLocation.value !== sourceLocation) return
+      if (props.value.mode === 'scanned-fixed') {
+        stack.value = [{ files, curr: file.fullpath }]
       } else {
-        stack.value.push({
-          files,
-          curr: file.name
-        })
+        stack.value.push({ files, curr: file.name })
       }
+      // The directory watcher reconciles the virtual grid after DOM/layout.
     } finally {
       np.value?.done()
     }
   }
 
   const back = (idx: number) => {
-    if (props.value.mode == 'walk') {
-      return
-    }
-    while (idx < stack.value.length - 1) {
-      stack.value.pop()
+    if (props.value.mode === 'walk' || idx < 0 || idx >= stack.value.length) return
+    folderRequestVersion++
+    // Array.pop() deletes its last index before updating length. Vue's
+    // synchronous path watcher can see the temporary sparse array, and
+    // Path.join(...basePath) then receives undefined and throws. This stops
+    // the FIRST breadcrumb click halfway through. Replace the stack once.
+    if (idx < stack.value.length - 1) {
+      stack.value = stack.value.slice(0, idx + 1)
     }
   }
 
@@ -166,7 +169,8 @@ export function useLocation () {
 
 
   const handleMultiModeTo = async (path: string) => {
-    // console.log('call handleMultiModeTo', path)
+    // Invalidate any pending grid-click request before changing the directory.
+    folderRequestVersion++
     if (props.value.mode === 'walk') {
       getPane.value().path = path
     } else if (props.value.mode === 'scanned-fixed') {
@@ -197,8 +201,10 @@ export function useLocation () {
           frags.shift()
         }
       }
-      for (let index = 0; index < currPaths.length; index++) {
-        stack.value.pop()
+      // Same atomic replacement as breadcrumb navigation: no transient holes
+      // can leak into synchronous currLocation and recycler watchers.
+      if (currPaths.length) {
+        stack.value = stack.value.slice(0, stack.value.length - currPaths.length)
       }
       if (!frags.length) {
         return refresh()
@@ -275,8 +281,12 @@ export function useLocation () {
         eventEmitter.value.emit('loadNextDir')
       } else {
 
-        const { files } = await getTargetFolderFiles(currLocation.value)
-        last(stack.value)!.files = files
+        const location = currLocation.value
+        const page = currPage.value
+        const { files } = await getTargetFolderFiles(location)
+        // A refresh started in folder A must never replace folder B's items.
+        if (currLocation.value !== location || currPage.value !== page || !page) return
+        page.files = files
       }
 
       deletedFiles.value.clear()

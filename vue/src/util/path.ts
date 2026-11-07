@@ -39,21 +39,15 @@ function _normalize (path: string): string {
 export const normalize =  memoize(_normalize)
 
 export function join (...paths: string[]): string {
-  if (!paths.length) {
-    return ''
-  }
-  // 将所有路径组合成一个字符串
-  let result = paths.join('/')
+  // Reactive Array.pop() briefly leaves a sparse last slot before it updates
+  // the length. A synchronous watcher can spread that gap into undefined.
+  // Avoid throwing during directory navigation and keep the last actual path.
+  const parts = paths.filter((path): path is string => typeof path === 'string')
+  if (!parts.length) return ''
 
-  // 规范化路径
-  result = normalize(result)
-  // 如果原始路径以斜杠结尾，则结果也以斜杠结尾
-  const endsWithSlash = paths[paths.length - 1].endsWith('/')
-  if (endsWithSlash && !result.endsWith('/')) {
-    return result + '/'
-  } else {
-    return result
-  }
+  const result = normalize(parts.join('/'))
+  const endsWithSlash = parts[parts.length - 1].endsWith('/')
+  return endsWithSlash && !result.endsWith('/') ? result + '/' : result
 }
 
 
@@ -67,7 +61,7 @@ export const normalizeRelativePathToAbsolute = (relativePath: string, cwd: strin
 export const splitPath = (path: string) => {
   path = normalize(path)
   const frags = path.split('/').filter(v => v)
-  if (frags[0].endsWith(':')) {
+  if (frags[0]?.endsWith(':')) {
     frags[0] = frags[0] + '/'// 分割完是c: -> c:/
   }
   return frags
