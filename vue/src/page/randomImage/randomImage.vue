@@ -3,7 +3,7 @@ import { RecycleScroller } from '@/components/recycleScroller'
 import FileItem from '@/components/FileItem.vue'
 import { useFileItemActions, useFilesDisplay, useFileTransfer, useHookShareState, useKeepMultiSelect, usePreview } from '@/page/fileTransfer/hook'
 import FullscreenPreview from '@/page/fileTransfer/FullscreenPreview.vue'
-import { ref, onMounted, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, onMounted, watch } from 'vue'
 import { GridViewFile, useGlobalStore } from '@/store/useGlobalStore'
 import { getRandomImages, getModelCheckpoints } from '@/api/db'
 import { identity } from '@vueuse/core'
@@ -12,7 +12,7 @@ import { openTiktokViewWithFiles } from '@/util/tiktokHelper'
 import MultiSelectKeep from '@/components/MultiSelectKeep.vue'
 
 import { LeftCircleOutlined, RightCircleOutlined } from '@/icon'
-import { copy2clipboardI18n } from '@/util'
+import { copy2clipboardI18n, useGlobalEventListen } from '@/util'
 import { message } from 'ant-design-vue'
 import { t } from '@/i18n'
 import { useLocalStorage } from '@vueuse/core'
@@ -20,12 +20,16 @@ import { prefix } from '@/util/const'
 
 const g = useGlobalStore()
 
-defineProps<{
+const props = defineProps<{
   tabIdx: number
   paneIdx: number
   id: string,
   paneKey: string
 }>()
+
+// Ant Design Vue keeps inactive panes mounted. A page's onMounted does not run
+// again when returning to an existing tab, so explicitly track its activation.
+const isActivePane = computed(() => g.tabList[props.tabIdx]?.key === props.paneKey)
 
 const loading = ref(false)
 const checkpointsLoading = ref(false)
@@ -35,6 +39,9 @@ const checkpointOptions = ref<{ value: string; label: string }[]>([
 ])
 const files = ref([] as GridViewFile[])
 const images = files
+// Remount the virtual scroller after its tab becomes visible. The recycler can
+// retain zero-sized measurements while the tab (or WebUI iframe) was hidden.
+const scrollerVersion = ref(0)
 
 let ready = false
 let requestId = 0
@@ -83,6 +90,12 @@ const fetch = async () => {
       message.warn(t(selectedCheckpoint.value ? 'randomCheckpointNoMatch' : 'randomIndexRequired'))
     }
     files.value = res
+    // A new batch may be shorter than the previous one. Keeping the old scroll
+    // offset can show an apparently blank page even when the response has files.
+    await nextTick()
+    if (currentRequest === requestId) {
+      scroller.value?.scrollToItem(0)
+    }
   } finally {
     if (currentRequest === requestId) {
       loading.value = false
@@ -113,7 +126,7 @@ onMounted(async () => {
     console.error('Could not load indexed checkpoints', error)
   }
   ready = true
-  void fetch()
+  if (isActivePane.value) void fetch()
   setTimeout(() => {
     showRandomImageSettingNotification()
   }, 2000)
@@ -132,6 +145,35 @@ const {
   onFileItemClick
 } = useFileItemActions({ openNext: identity as any })
 const { previewIdx, previewing, onPreviewVisibleChange, previewImgMove, canPreview } = usePreview()
+
+const refreshVisiblePage = async () => {
+  if (!ready || !isActivePane.value) return
+  await nextTick()
+  if (!ready || !isActivePane.value) return
+  scrollerVersion.value += 1
+  await nextTick()
+  if (ready && isActivePane.value) void fetch()
+}
+
+watch(isActivePane, (active) => {
+  if (active) {
+    void refreshVisiblePage()
+  } else {
+    // Do not leave a fullscreen overlay on top of another page.
+    previewing.value = false
+    requestId += 1
+    loading.value = false
+  }
+})
+
+// Also handle leaving SD WebUI for another top-level tab or browser tab.
+useGlobalEventListen('returnToIIB', () => {
+  if (isActivePane.value) void refreshVisiblePage()
+})
+onBeforeUnmount(() => {
+  ready = false
+  requestId += 1
+})
 
 const onContextMenuClickU: typeof onContextMenuClick = async (e, file, idx) => {
   stack.value = [{ curr: '', files: files.value! }] // hack，for delete multi files
@@ -189,7 +231,11 @@ const onContextMenuClickU: typeof onContextMenuClick = async (e, file, idx) => {
         </div>
       </ASkeleton>
     </AModal>
-    <RecycleScroller ref="scroller" class="file-list" :items="files.slice()" :item-size="itemSize.first"
+    <a-spin v-if="loading && !files.length" class="page-status" />
+    <div v-else-if="!files.length" class="page-status">
+      {{ $t(selectedCheckpoint ? 'randomCheckpointNoMatch' : 'randomIndexRequired') }}
+    </div>
+    <RecycleScroller :key="scrollerVersion" ref="scroller" class="file-list" :items="files" :item-size="itemSize.first"
       key-field="fullpath" :item-secondary-size="itemSize.second" :gridItems="gridItems" @scroll="onScroll">
       <template v-slot="{ item: file, index: idx }">
         <file-item :idx="idx" :file="file" :cell-width="cellWidth"
@@ -214,6 +260,7 @@ const onContextMenuClickU: typeof onContextMenuClick = async (e, file, idx) => {
 
   height: 100%;
   overflow: auto;
+  position: relative;
   display: flex;
   flex-direction: column;
 
@@ -243,6 +290,17 @@ const onContextMenuClickU: typeof onContextMenuClick = async (e, file, idx) => {
   .checkpoint-select {
     width: 240px;
     max-width: 70vw;
+  }
+
+  .page-status {
+    position: absolute;
+    top: 44%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 85%;
+    text-align: center;
+    color: var(--zp-secondary);
+    pointer-events: none;
   }
 
   .file-list {
