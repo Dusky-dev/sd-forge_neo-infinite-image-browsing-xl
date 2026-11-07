@@ -385,3 +385,23 @@ test('leaving a folder invalidates its in-flight first click', async () => {
   assert.equal(c.state.stack.value.length, initial.length)
   assert.deepEqual(c.state.currPage.value.files, oldFiles)
 })
+
+test('breadcrumb back truncates folder stack atomically for synchronous observers', () => {
+  const c = setup()
+  c.state.stack.value = [
+    { curr: '/', files: [] },
+    { curr: 'pictures', files: [] },
+    { curr: 'album', files: oldFiles }
+  ]
+  const path = vue.computed(() => c.state.stack.value.map(page => {
+    if (!page) throw new Error('transient hole during Array.pop()')
+    return page.curr
+  }).join('/'))
+  const stop = vue.watch(path, () => {}, { flush: 'sync' })
+  try {
+    assert.doesNotThrow(() => c.location.back(1))
+    assert.deepEqual(c.state.stack.value.map(page => page.curr), ['/', 'pictures'])
+  } finally {
+    stop()
+  }
+})
