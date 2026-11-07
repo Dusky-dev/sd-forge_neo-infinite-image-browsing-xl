@@ -158,20 +158,15 @@ export function useLocation () {
   }
 
   const back = (idx: number) => {
-    console.log('[IIB-NAV DEBUG] back BEFORE', idx, props.value.mode, stack.value.map(p=>p.curr))
-    if (props.value.mode == 'walk') {
-      return
-    }
+    if (props.value.mode === 'walk' || idx < 0 || idx >= stack.value.length) return
     folderRequestVersion++
-    while (idx < stack.value.length - 1) {
-      try {
-        stack.value.pop()
-      } catch (error) {
-        console.error('[IIB-NAV DEBUG] POP FAILED', error instanceof Error ? error.stack : error)
-        throw error
-      }
+    // Array.pop() deletes its last index before updating length. Vue's
+    // synchronous path watcher can see the temporary sparse array, and
+    // Path.join(...basePath) then receives undefined and throws. This stops
+    // the FIRST breadcrumb click halfway through. Replace the stack once.
+    if (idx < stack.value.length - 1) {
+      stack.value = stack.value.slice(0, idx + 1)
     }
-    console.log('[IIB-NAV DEBUG] back AFTER', stack.value.map(p=>p.curr))
   }
 
   const backToLastUseTo = () => {
@@ -222,8 +217,10 @@ export function useLocation () {
           frags.shift()
         }
       }
-      for (let index = 0; index < currPaths.length; index++) {
-        stack.value.pop()
+      // Same atomic replacement as breadcrumb navigation: no transient holes
+      // can leak into synchronous currLocation and recycler watchers.
+      if (currPaths.length) {
+        stack.value = stack.value.slice(0, stack.value.length - currPaths.length)
       }
       if (!frags.length) {
         return refresh()
