@@ -29,8 +29,13 @@ afterEach(() => {
 
 function setup({ mode = 'scanned', previewing = false, fetchFiles, walker } = {}) {
   const scrollPositions = []
+  const gridUpdates = []
   const state = {
-    scroller: vue.ref({ scrollToItem: idx => scrollPositions.push(idx) }),
+    scroller: vue.ref({
+      scrollToItem: idx => scrollPositions.push(idx),
+      scrollToPosition: idx => scrollPositions.push(idx),
+      updateVisibleItems: changed => gridUpdates.push(changed)
+    }),
     stackViewEl: vue.ref(),
     stack: vue.ref([{ curr: '/images', files: oldFiles }]),
     currLocation: vue.ref('/images'),
@@ -112,7 +117,7 @@ function setup({ mode = 'scanned', previewing = false, fetchFiles, walker } = {}
   }
   cleanups.push(unmount)
   return {
-    state, global, events, messages, location, unmount, scrollPositions,
+    state, global, events, messages, location, unmount, scrollPositions, gridUpdates,
     fetchCount: () => fetchCount,
     disableWalkRefresh: () => loadingContent.children[1].props.onClick(),
     returnToIIB: () => listeners.get('returnToIIB')(),
@@ -285,6 +290,7 @@ test('scanned-fixed sibling navigation resets the scroller even with constant st
 
   assert.equal(c.state.stack.value.length, 1)
   assert.deepEqual(c.scrollPositions, [0])
+  assert.deepEqual(c.gridUpdates.slice(-1), [true])
 })
 
 test('breadcrumb navigation restores the saved scroll position in the parent directory', async () => {
@@ -302,11 +308,80 @@ test('breadcrumb navigation restores the saved scroll position in the parent dir
   await settleFolderNavigation()
 
   assert.deepEqual(c.scrollPositions, [8])
+  assert.deepEqual(c.gridUpdates.slice(-1), [true])
 })
 
-test('directory browser recreates the virtual scroller when its path changes', () => {
+test('directory browser retains the recycler while changing its file list', () => {
   const source = readFileSync(
     join(__dirname, '../src/page/fileTransfer/stackView.vue'), 'utf8'
   )
-  assert.match(source, /<RecycleScroller\s+:key="currLocation"/)
+  assert.match(source, /<RecycleScroller\s+class="file-list"/)
+  assert.doesNotMatch(source, /<RecycleScroller\s+:key="currLocation"/)
+})
+
+
+// ---- Actual file click/async response path: one click must be sufficient ----
+
+test('one folder click loads its files and reconciles the recycler', async () => {
+  const c = setup({ mode: 'scanned-fixed' })
+  await c.location.openNext({
+    type: 'dir', name: 'subfolder', fullpath: '/images/subfolder'
+  })
+  // In the actual browser currLocation is derived from stack, rather than the
+  // independent ref in this isolated composable harness.
+  c.state.currLocation.value = '/images/subfolder'
+  await settleFolderNavigation()
+  assert.equal(c.fetchCount(), 1)
+  assert.equal(c.state.currPage.value.curr, '/images/subfolder')
+  assert.deepEqual(c.state.currPage.value.files, newFiles)
+  assert.deepEqual(c.gridUpdates.slice(-1), [true])
+  assert.deepEqual(c.scrollPositions.slice(-1), [0])
+})
+
+test('two fast clicks on a directory append it only once', async () => {
+  const a = deferred()
+  const b = deferred()
+  const c = setup({
+    fetchFiles: (() => {
+      let calls = 0
+      return () => ++calls === 1 ? a.promise : b.promise
+    })()
+  })
+  const folder = { type: 'dir', fullpath: '/images/subfolder', name: 'subfolder' }
+  const firstClick = c.location.openNext(folder)
+  const secondClick = c.location.openNext(folder)
+  b.resolve({ files: newFiles })
+  await secondClick
+  a.resolve({ files: oldFiles })
+  await firstClick
+  assert.equal(c.fetchCount(), 2)
+  assert.equal(c.state.stack.value.length, 2)
+  assert.deepEqual(c.state.currPage.value.files, newFiles)
+})
+
+test('stale manual refresh may not overwrite folder opened while request was in flight', async () => {
+  const response = deferred()
+  const c = setup({ fetchFiles: () => response.promise })
+  const refreshPromise = c.location.refresh()
+  const newPage = { curr: 'other', files: [{ fullpath: '/other/keep.png', name: 'keep.png' }] }
+  c.state.stack.value.push(newPage)
+  c.state.currLocation.value = '/images/other'
+  response.resolve({ files: newFiles })
+  await refreshPromise
+  assert.equal(c.state.currPage.value.curr, 'other')
+  assert.equal(c.state.currPage.value.files[0].name, 'keep.png')
+})
+
+test('leaving a folder invalidates its in-flight first click', async () => {
+  const response = deferred()
+  const c = setup({ fetchFiles: () => response.promise })
+  const initial = c.state.stack.value.slice()
+  const pending = c.location.openNext({
+    type: 'dir', fullpath: '/images/subfolder', name: 'subfolder'
+  })
+  c.location.back(0)
+  response.resolve({ files: newFiles })
+  await pending
+  assert.equal(c.state.stack.value.length, initial.length)
+  assert.deepEqual(c.state.currPage.value.files, oldFiles)
 })
