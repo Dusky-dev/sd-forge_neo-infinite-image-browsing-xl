@@ -91,9 +91,7 @@ try {
   log('breadcrumb after first click:', await page.locator('.ant-breadcrumb').innerText(),
     'events:', await page.evaluate(() => window.__breadcrumbClicks))
   if ((await page.locator('.ant-breadcrumb').innerText()).includes('album')) {
-    await crumb.click()
-    await page.waitForTimeout(400)
-    log('breadcrumb after SECOND click:', await page.locator('.ant-breadcrumb').innerText())
+    throw new Error('Breadcrumb did not navigate on the FIRST click')
   }
   const diagnostic = await page.evaluate(() => {
     const scroller = document.querySelector('.file-list.vue-recycle-scroller')
@@ -141,7 +139,8 @@ try {
     }
   })
   log('back-navigation diagnostic:', JSON.stringify(diagnostic))
-  await albumNode.waitFor({ state: 'visible', timeout: 4000 })
+  await page.locator('li.file-item-trigger:visible').filter({ hasText: 'album' }).first()
+    .waitFor({ state: 'visible', timeout: 4000 })
   log('SUCCESS breadcrumb back renders the previous folder in one click')
   if (errors.length) log('browser console warnings/errors:', errors.slice(0,12))
 } catch (error) {
