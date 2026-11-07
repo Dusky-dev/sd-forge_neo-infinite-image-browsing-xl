@@ -8,16 +8,16 @@ const src = ts.transpileModule(
   readFileSync(join(__dirname, '../src/util/path.ts'), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }
 ).outputText
-const module = { exports: {} }
+const moduleObj = { exports: {} }
 runInNewContext(src, {
-  module,
-  exports: module.exports,
+  module: moduleObj,
+  exports: moduleObj.exports,
   require(name) {
     assert.equal(name, 'lodash-es')
     return { memoize: fn => fn }
   }
 })
-const Path = module.exports
+const Path = moduleObj.exports
 
 test('path join tolerates sparse reactive arrays during folder removal', () => {
   const fragments = ['/', 'pictures', 'album']
