@@ -290,7 +290,6 @@ test('scanned-fixed sibling navigation resets the scroller even with constant st
 
   assert.equal(c.state.stack.value.length, 1)
   assert.deepEqual(c.scrollPositions, [0])
-  assert.deepEqual(c.gridUpdates.slice(-1), [true])
 })
 
 test('breadcrumb navigation restores the saved scroll position in the parent directory', async () => {
@@ -308,21 +307,19 @@ test('breadcrumb navigation restores the saved scroll position in the parent dir
   await settleFolderNavigation()
 
   assert.deepEqual(c.scrollPositions, [8])
-  assert.deepEqual(c.gridUpdates.slice(-1), [true])
 })
 
-test('directory browser retains the recycler while changing its file list', () => {
+test('directory browser keys recycler by folder path', () => {
   const source = readFileSync(
     join(__dirname, '../src/page/fileTransfer/stackView.vue'), 'utf8'
   )
-  assert.match(source, /<RecycleScroller\s+class="file-list"/)
-  assert.doesNotMatch(source, /<RecycleScroller\s+:key="currLocation"/)
+  assert.match(source, /<RecycleScroller\s+:key="currLocation"/)
 })
 
 
 // ---- Actual file click/async response path: one click must be sufficient ----
 
-test('one folder click loads its files and reconciles the recycler', async () => {
+test('one folder click loads its files', async () => {
   const c = setup({ mode: 'scanned-fixed' })
   await c.location.openNext({
     type: 'dir', name: 'subfolder', fullpath: '/images/subfolder'
@@ -334,7 +331,6 @@ test('one folder click loads its files and reconciles the recycler', async () =>
   assert.equal(c.fetchCount(), 1)
   assert.equal(c.state.currPage.value.curr, '/images/subfolder')
   assert.deepEqual(c.state.currPage.value.files, newFiles)
-  assert.deepEqual(c.gridUpdates.slice(-1), [true])
   assert.deepEqual(c.scrollPositions.slice(-1), [0])
 })
 
