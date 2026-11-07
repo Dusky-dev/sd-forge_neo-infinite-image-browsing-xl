@@ -34,7 +34,10 @@ const album = Array.from({ length: 20 }, (_, i) =>
 )
 const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
 page.on('pageerror', e => errors.push(e.message))
-page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
+page.on('console', m => {
+  if (m.type() === 'error') errors.push(m.text())
+  if (m.text().includes('[IIB-NAV DEBUG]')) console.log('BROWSER:', m.text())
+})
 page.on('requestfailed', request => {
   if (!request.url().includes('/get_thumbnail')) errors.push('request failed ' + request.url())
 })
