@@ -45,33 +45,17 @@ export function useLocation () {
     sortMethod
   } = useHookShareState().toRefs()
 
-  // A directory navigation must explicitly reconcile the virtual scroller.
-  // Its pooled views can otherwise keep the previous folder's visible range
-  // even after the new file list arrives. Scrolling/clicking a second time
-  // happens to trigger that reconciliation, which is why a double-click works.
-  let navigationLayoutVersion = 0
-  const syncDirectoryView = async (location: string, version: number) => {
-    await nextTick()
-    // Wait for browser layout as well as Vue's DOM patch: scrollToItem() can
-    // silently do nothing when the grid's clientHeight is still zero.
-    if (typeof requestAnimationFrame === 'function') {
-      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-    }
-    if (version !== navigationLayoutVersion || currLocation.value !== location) return
-    const grid = scroller.value
-    const restoreIndex = last(stack.value)?.scrollIndex ?? 0
-    // Make the viewport deterministic before telling the recycler to assign
-    // item views. A previous long directory may leave scrollTop out of bounds.
-    if (restoreIndex === 0) grid?.scrollToPosition?.(0)
-    else grid?.scrollToItem(restoreIndex)
-    grid?.updateVisibleItems?.(true)
-  }
-
+  // Folder navigation can change the current path without changing stack
+  // depth (for example two siblings, or any scanned-fixed navigation).
+  // The scroller is keyed by currLocation in stackView.vue, so wait for Vue to
+  // mount that folder's fresh recycler before restoring its saved position.
   watch(
-    [currLocation, currPage],
-    ([location]) => {
-      const version = ++navigationLayoutVersion
-      void syncDirectoryView(location, version)
+    currLocation,
+    async (location) => {
+      await nextTick()
+      // Ignore stale callbacks from rapid breadcrumb/address-bar navigation.
+      if (currLocation.value !== location) return
+      scroller.value?.scrollToItem(last(stack.value)?.scrollIndex ?? 0)
     },
     { flush: 'post' }
   )
@@ -307,7 +291,6 @@ export function useLocation () {
 
       deletedFiles.value.clear()
       scroller.value?.scrollToItem(0)
-      scroller.value?.updateVisibleItems?.(true)
       message.success(t('refreshCompleted'))
     } finally {
       np.value?.done()
