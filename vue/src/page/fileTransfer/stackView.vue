@@ -376,7 +376,7 @@ onMounted(() => {
         </div>
       </div>
       <div v-if="currPage" class="view">
-        <RecycleScroller :key="currLocation" class="file-list" :items="sortedFiles" ref="scroller" @scroll="onScroll"
+        <RecycleScroller class="file-list" :items="sortedFiles" ref="scroller" @scroll="onScroll"
           :item-size="itemSize.first" key-field="fullpath" :item-secondary-size="itemSize.second"
           :gridItems="gridItems">
           <template v-slot="{ item: file, index: idx }">
