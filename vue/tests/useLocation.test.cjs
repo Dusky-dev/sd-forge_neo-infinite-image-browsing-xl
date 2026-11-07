@@ -89,12 +89,18 @@ function setup({ mode = 'scanned', previewing = false, fetchFiles, walker } = {}
     vue: { ...vue, onMounted() {}, onUnmounted: fn => unmountCallbacks.push(fn) },
     'vue3-ts-util': {
       delay: async () => {},
+      ok: (v, msg) => { if (!v) throw new Error(msg || 'missing value'); return v },
       useWatchDocument() {},
       Task: { run: ({ action }) => { poll = action; return { clearTask() {} } } }
     },
     '.': { useHookShareState: () => ({ toRefs: () => state }), stackCache: { get: () => undefined }, global },
     '@/components/numInput.vue': {},
-    '@/util/path': { normalize: value => value },
+    '@/util/path': {
+      normalize: value => value,
+      isAbsolute: path => path.startsWith('/'),
+      splitPath: path => path.split('/').filter(Boolean),
+      join: (...paths) => paths.filter(Boolean).join('/').replace(/\\/+/g, '/')
+    },
     '@/util/scroller': { getVisibleRange: () => ({ start: 0, end: 20 }) },
     'multi-nprogress': {},
     'lodash-es': { last: items => items.at(-1), debounce: () => () => {} },
@@ -397,6 +403,35 @@ test('breadcrumb back truncates folder stack atomically for synchronous observer
   try {
     assert.doesNotThrow(() => c.location.back(1))
     assert.deepEqual(c.state.stack.value.map(page => page.curr), ['/', 'pictures'])
+  } finally {
+    stop()
+  }
+})
+
+test('address bar switches sibling folders in one atomic directory-stack update', async () => {
+  const c = setup()
+  c.global.conf = { is_win: false, sd_cwd: '/' }
+  const root = { type: 'dir', fullpath: '/pictures', name: 'pictures' }
+  const album = { type: 'dir', fullpath: '/pictures/album', name: 'album' }
+  const sibling = { type: 'dir', fullpath: '/pictures/sibling', name: 'sibling' }
+  c.state.stack.value = [
+    { curr: '/', files: [root] },
+    { curr: 'pictures', files: [album, sibling] },
+    { curr: 'album', files: oldFiles }
+  ]
+  c.state.currLocation.value = '/pictures/album'
+
+  const path = vue.computed(() => c.state.stack.value.map(page => {
+    if (!page) throw new Error('transient hole in directory stack')
+    return page.curr
+  }).join('/'))
+  const stop = vue.watch(path, () => {}, { flush: 'sync' })
+  try {
+    c.location.locInputValue.value = '/pictures/sibling'
+    await assert.doesNotReject(async () => c.location.onLocEditEnter())
+    assert.equal(c.fetchCount(), 1)
+    assert.deepEqual(c.state.stack.value.map(page => page.curr), ['/', 'pictures', 'sibling'])
+    assert.deepEqual(c.state.currPage.value.files, newFiles)
   } finally {
     stop()
   }
