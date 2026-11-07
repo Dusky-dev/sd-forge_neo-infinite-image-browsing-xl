@@ -124,7 +124,10 @@ export function useFilesDisplay ({ fetchNext }: {fetchNext?: () => Promise<any>}
       const len = sortedFiles.value.length
       const preload = 50
       if (!len) {
-        return true
+        // Empty image-search/random tabs have no loader to make progress.
+        // Without this guard their scroll handler loops forever on an empty
+        // result, making page switches appear frozen or blank.
+        return !!fetchNext || (props.value.mode === 'walk' && canLoadNext.value)
       }
       if (fetchNext) {
         return currIdx() > len - preload
