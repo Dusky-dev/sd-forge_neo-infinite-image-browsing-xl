@@ -27,6 +27,7 @@ jobs:
       - name: Start Vite test page
         working-directory: vue
         run: |
+          npx vite optimize --force > /tmp/iib-vite-optimize.log 2>&1
           (npx vite --host 127.0.0.1 --port 3002 > /tmp/iib-vite.log 2>&1 &)
           for i in {1..30}; do
             if curl -fsS http://127.0.0.1:3002/navigation-smoke.html -o /dev/null; then
