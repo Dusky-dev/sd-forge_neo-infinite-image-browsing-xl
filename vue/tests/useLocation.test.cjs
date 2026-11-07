@@ -99,7 +99,7 @@ function setup({ mode = 'scanned', previewing = false, fetchFiles, walker } = {}
       normalize: value => value,
       isAbsolute: path => path.startsWith('/'),
       splitPath: path => path.split('/').filter(Boolean),
-      join: (...paths) => paths.filter(Boolean).join('/').replace(/\\/+/g, '/')
+      join: (...paths) => paths.filter(Boolean).join('/').replace(/\/+/g, '/')
     },
     '@/util/scroller': { getVisibleRange: () => ({ start: 0, end: 20 }) },
     'multi-nprogress': {},
