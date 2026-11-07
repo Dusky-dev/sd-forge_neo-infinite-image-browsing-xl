@@ -158,6 +158,7 @@ export function useLocation () {
   }
 
   const back = (idx: number) => {
+    console.log('[IIB-NAV DEBUG] back BEFORE', idx, props.value.mode, stack.value.map(p=>p.curr))
     if (props.value.mode == 'walk') {
       return
     }
@@ -165,7 +166,10 @@ export function useLocation () {
     while (idx < stack.value.length - 1) {
       stack.value.pop()
     }
+    console.log('[IIB-NAV DEBUG] back AFTER', stack.value.map(p=>p.curr))
   }
+
+  watch(stack, () => console.log('[IIB-NAV DEBUG] STACK MUTATION', stack.value.map(p=>p.curr)), { deep: true, flush: 'sync' })
 
   const backToLastUseTo = () => {
     handleMultiModeTo(Path.getParentDirectory(currLocation.value))
