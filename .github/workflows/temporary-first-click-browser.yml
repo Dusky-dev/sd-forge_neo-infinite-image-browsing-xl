@@ -1,0 +1,47 @@
+name: Browser smoke test for one-click directory navigation (temporary)
+
+on:
+  push:
+    branches:
+      - fix/first-click-folder-render-20261107
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Dependencies
+        working-directory: vue
+        run: yarn install --frozen-lockfile
+      - name: Browser automation
+        run: |
+          mkdir -p /tmp/iib-smoke
+          npm install --prefix /tmp/iib-smoke --no-save playwright-core@1.58.2
+          command -v google-chrome || command -v chromium || command -v chromium-browser
+      - name: Start Vite test page
+        working-directory: vue
+        run: |
+          (npx vite --host 127.0.0.1 --port 3002 > /tmp/iib-vite.log 2>&1 &)
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:3002/navigation-smoke.html -o /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/iib-vite.log
+          exit 1
+      - name: Run actual directory-click browser smoke
+        run: node vue/navigation-smoke-test.mjs
+      - name: Upload failure screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: directory-navigation-failure
+          path: /tmp/iib-smoke-failure.png
+          if-no-files-found: ignore
