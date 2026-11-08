@@ -92,10 +92,12 @@ Promise.resolve().then(async () => {
       console.warn('IIB iframe resize notification failed', error)
     }
   }
-  onUiTabChange(() => {
-    if (!isIibTabActive()) return
-    requestAnimationFrame(() => requestAnimationFrame(restoreIibViewport))
-  })
+  if (typeof onUiTabChange === 'function') {
+    onUiTabChange(() => {
+      if (!isIibTabActive()) return
+      requestAnimationFrame(() => requestAnimationFrame(restoreIibViewport))
+    })
+  }
 
   const IIB_container_id = [Date.now(), Math.random()].join()
   window.IIB_container_id = IIB_container_id
