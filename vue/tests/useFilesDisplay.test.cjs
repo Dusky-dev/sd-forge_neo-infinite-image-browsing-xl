@@ -118,7 +118,9 @@ test('returning from txt2img rebuilds an empty but visible virtual-scroller pool
     c.state.sortedFiles.value = images
     c.state.currPage.value = { scrollIndex: 4 }
     for (const handler of c.callbacks.returnToIIB || []) handler()
-    await vue.nextTick()
+    // The callback awaits nextTick itself and then schedules two frames.
+    // Allow that microtask chain to settle before inspecting the recycler.
+    await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(updates, [true, true])
     assert.deepEqual(scrolls, [4])
     assert.equal(c.state.sortedFiles.value.length, 9)
@@ -140,7 +142,9 @@ test('returning with a healthy visible pool preserves the current scroll positio
     }
     c.state.sortedFiles.value = [{ fullpath: '/pics/a.jxl' }]
     for (const handler of c.callbacks.returnToIIB || []) handler()
-    await vue.nextTick()
+    // The callback awaits nextTick itself and then schedules two frames.
+    // Allow that microtask chain to settle before inspecting the recycler.
+    await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(updates, [true])
     assert.deepEqual(scrolls, [])
   } finally {
@@ -160,7 +164,9 @@ test('host return does not update scrollers in inactive/hidden IIB panes', async
     }
     c.state.sortedFiles.value = [{ fullpath: '/pics/a.jxl' }]
     for (const handler of c.callbacks.returnToIIB || []) handler()
-    await vue.nextTick()
+    // The callback awaits nextTick itself and then schedules two frames.
+    // Allow that microtask chain to settle before inspecting the recycler.
+    await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(updates, [])
   } finally {
     c.scope.stop()
