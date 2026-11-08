@@ -48,6 +48,8 @@ export interface Scroller {
   /** v3 expose 出来的根元素（用于实测内容盒宽度算列数） */
   el?: HTMLElement
   scrollToItem (idx: number): void
+  /** vue-virtual-scroller v3 public method for recalculating a hidden/revealed grid. */
+  updateVisibleItems? (checkItem?: boolean): void
 }
 
 export const { useHookShareState } = createTypedShareStateHook(
