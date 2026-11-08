@@ -13,7 +13,7 @@ Promise.resolve().then(async () => {
     <link rel="icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Infinite Image Browsing</title>
-    <script type="module" crossorigin src="/infinite_image_browsing/fe-static/assets/index-4228ba2e.js"></script>
+    <script type="module" crossorigin src="/infinite_image_browsing/fe-static/assets/index-2aea424e.js"></script>
     <link rel="stylesheet" href="/infinite_image_browsing/fe-static/assets/index-fc02a542.css">
   </head>
 
@@ -76,31 +76,46 @@ Promise.resolve().then(async () => {
   iframe.style = 'width: 100%;height:100vh'
   wrap.appendChild(iframe)
 
-  if (shouldMaximize) {
-    onUiTabChange(() => {
-      const el = get_uiCurrentTabContent()
-      if (el?.id.includes('infinite-image-browsing')) {
-        try {
-          const iibTop = gradioApp().querySelector('#iib_top')
-          if (!iibTop) {
-            throw new Error('element \'#iib_top\' is not found')
-          }
-          const topRect = iibTop.getBoundingClientRect()
-          wrap.style = `
-            top:${Math.max(isLobe() ? 32 : 128, topRect.top) - 10}px;
-            position: fixed;
-            left: 10px;
-            right: 10px;
-            z-index: 100;
-            width: unset;
-            bottom: 10px;`
-          iframe.style = 'width: 100%;height:100%'
-        } catch (error) {
-          console.error('Error mounting IIB. Running fallback.', error)
-          wrap.style = ''
-          iframe.style = 'width: 100%;height:100vh'
+  // Gradio sets inactive tabs to display:none without reloading this iframe.
+  // Restore its dimensions *after* the new top-level tab has been laid out,
+  // then notify the iframe's resize observers/virtual scrollers.
+  const isIibTabActive = () => get_uiCurrentTabContent()?.id.includes('infinite-image-browsing')
+  const restoreIibViewport = () => {
+    if (!isIibTabActive()) return
+    if (shouldMaximize) {
+      try {
+        const iibTop = gradioApp().querySelector('#iib_top')
+        if (!iibTop) {
+          throw new Error("element '#iib_top' is not found")
         }
+        const topRect = iibTop.getBoundingClientRect()
+        wrap.style = `
+          top:${Math.max(isLobe() ? 32 : 128, topRect.top) - 10}px;
+          position: fixed;
+          left: 10px;
+          right: 10px;
+          z-index: 100;
+          width: unset;
+          bottom: 10px;`
+        iframe.style = 'width: 100%;height:100%'
+      } catch (error) {
+        console.error('Error mounting IIB. Running fallback.', error)
+        wrap.style = ''
+        iframe.style = 'width: 100%;height:100vh'
       }
+    }
+    // Recalculate the iframe viewport after Gradio finishes showing the tab.
+    // This does not reload srcdoc or discard the current browser state.
+    try {
+      iframe.contentWindow?.dispatchEvent(new Event('resize'))
+    } catch (error) {
+      console.warn('IIB iframe resize notification failed', error)
+    }
+  }
+  if (typeof onUiTabChange === 'function') {
+    onUiTabChange(() => {
+      if (!isIibTabActive()) return
+      requestAnimationFrame(() => requestAnimationFrame(restoreIibViewport))
     })
   }
 
