@@ -66,7 +66,7 @@ Promise.resolve().then(async () => {
       try {
         const iibTop = gradioApp().querySelector('#iib_top')
         if (!iibTop) {
-          throw new Error('element \\'#iib_top\\' is not found')
+          throw new Error("element '#iib_top' is not found")
         }
         const topRect = iibTop.getBoundingClientRect()
         wrap.style = `
