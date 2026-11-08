@@ -1,5 +1,5 @@
 import { useElementSize } from '@vueuse/core'
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch, reactive, nextTick } from 'vue'
 import { Top4MediaInfo, batchGetDirTop4MediaInfo } from '@/api'
 import {
   delay} from 'vue3-ts-util'
@@ -167,6 +167,31 @@ export function useFilesDisplay ({ fetchNext }: {fetchNext?: () => Promise<any>}
       })
     }
   })
+
+  // Gradio hides the entire IIB iframe when a different top-level tab is open.
+  // The v3 virtual scroller can retain its old/empty pool after the iframe
+  // becomes visible again, even though the folder and file data are unchanged.
+  // Refresh its range only after the iframe and pane have a measurable layout.
+  const restoreGridAfterHostTabReturn = async () => {
+    await nextTick()
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const s = scroller.value
+      const el = scrollerEl.value
+      if (!s || !el) return
+      const { width, height } = el.getBoundingClientRect()
+      if (width <= 0 || height <= 0) return // inactive internal IIB pane
+      const hadVisibleRows = getVisibleRange(s).end > 0
+      s.updateVisibleItems?.(true)
+      if (!hadVisibleRows && sortedFiles.value.length > 0) {
+        // Recover an empty pool without jumping a healthy existing viewport.
+        const savedIndex = Math.max(0, Math.min(sortedFiles.value.length - 1, currPage.value?.scrollIndex ?? 0))
+        s.scrollToItem(savedIndex)
+        s.updateVisibleItems?.(true)
+      }
+      state.eventEmitter.emit('viewableAreaFilesChange')
+    }))
+  }
+  useGlobalEventListen('returnToIIB', () => { void restoreGridAfterHostTabReturn() })
 
   // 切回 IIB 页（标签缓存可能在离开期间被后台维护清空）或缓存刚被清空时，
   // 立即补拉一次可视区标签，避免要等用户滚动才恢复

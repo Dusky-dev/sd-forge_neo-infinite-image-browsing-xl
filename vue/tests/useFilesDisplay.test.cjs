@@ -59,14 +59,15 @@ function setup(mode, canLoad = false) {
     },
     '@/util': {
       makeAsyncFunctionSingle: fn => fn,
-      useGlobalEventListen: () => {}
+      useGlobalEventListen: (name, cb) => { (callbacks[name] ??= []).push(cb) }
     },
-    '@/util/scroller': { getVisibleRange: () => ({ start: 0, end: 0 }) },
+    '@/util/scroller': { getVisibleRange: s => ({ start: 0, end: s?.visiblePool?.length ? 1 : 0 }) },
     '@/util/gridCellLevel': { nearestGridCellLevel: x => x }
   }
   const exports = {}
   runInNewContext(source, {
     exports,
+    requestAnimationFrame: fn => fn(),
     require: name => {
       assert.ok(Object.hasOwn(modules, name), 'Unexpected module ' + name)
       return modules[name]
@@ -74,7 +75,7 @@ function setup(mode, canLoad = false) {
   })
   const scope = vue.effectScope()
   const gallery = scope.run(() => exports.useFilesDisplay())
-  return { state, gallery, scope, delays: () => delays, loads: () => loads }
+  return { state, gallery, scope, callbacks, delays: () => delays, loads: () => loads }
 }
 
 for (const mode of [undefined, 'scanned', 'scanned-fixed', 'walk']) {
@@ -96,6 +97,77 @@ test('walk-mode empty gallery loads a next folder if available', async () => {
     await c.gallery.onScroll()
     assert.equal(c.loads(), 1)
     assert.equal(c.state.sortedFiles.value.length, 1)
+  } finally {
+    c.scope.stop()
+  }
+})
+
+
+test('returning from txt2img rebuilds an empty but visible virtual-scroller pool without dropping files', async () => {
+  const c = setup('scanned')
+  try {
+    const updates = []
+    const scrolls = []
+    c.state.scroller.value = {
+      el: { nodeType: 1, getBoundingClientRect: () => ({ width: 900, height: 550 }) },
+      visiblePool: [],
+      updateVisibleItems: force => updates.push(force),
+      scrollToItem: idx => scrolls.push(idx)
+    }
+    const images = Array.from({ length: 9 }, (_, i) => ({ fullpath: '/pics/' + i + '.jpg' }))
+    c.state.sortedFiles.value = images
+    c.state.currPage.value = { scrollIndex: 4 }
+    for (const handler of c.callbacks.returnToIIB || []) handler()
+    // The callback awaits nextTick itself and then schedules two frames.
+    // Allow that microtask chain to settle before inspecting the recycler.
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(updates, [true, true])
+    assert.deepEqual(scrolls, [4])
+    assert.equal(c.state.sortedFiles.value.length, 9)
+  } finally {
+    c.scope.stop()
+  }
+})
+
+test('returning with a healthy visible pool preserves the current scroll position', async () => {
+  const c = setup('scanned-fixed')
+  try {
+    const updates = []
+    const scrolls = []
+    c.state.scroller.value = {
+      el: { nodeType: 1, getBoundingClientRect: () => ({ width: 900, height: 550 }) },
+      visiblePool: [{ nr: { index: 7 } }],
+      updateVisibleItems: force => updates.push(force),
+      scrollToItem: idx => scrolls.push(idx)
+    }
+    c.state.sortedFiles.value = [{ fullpath: '/pics/a.jxl' }]
+    for (const handler of c.callbacks.returnToIIB || []) handler()
+    // The callback awaits nextTick itself and then schedules two frames.
+    // Allow that microtask chain to settle before inspecting the recycler.
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(updates, [true])
+    assert.deepEqual(scrolls, [])
+  } finally {
+    c.scope.stop()
+  }
+})
+
+test('host return does not update scrollers in inactive/hidden IIB panes', async () => {
+  const c = setup('scanned')
+  try {
+    const updates = []
+    c.state.scroller.value = {
+      el: { nodeType: 1, getBoundingClientRect: () => ({ width: 0, height: 0 }) },
+      visiblePool: [],
+      updateVisibleItems: force => updates.push(force),
+      scrollToItem() {}
+    }
+    c.state.sortedFiles.value = [{ fullpath: '/pics/a.jxl' }]
+    for (const handler of c.callbacks.returnToIIB || []) handler()
+    // The callback awaits nextTick itself and then schedules two frames.
+    // Allow that microtask chain to settle before inspecting the recycler.
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(updates, [])
   } finally {
     c.scope.stop()
   }
