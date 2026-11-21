@@ -42,14 +42,7 @@ onBeforeUnmount(unregister)
 </script>
 
 <template>
-  <!--
-    The a-image instance is only a controller for the teleported fullscreen
-    overlay, not a second thumbnail. Hide its *native DOM parent* so image
-    component fallthrough/scoped styles cannot leave a ghost image in the grid
-    after opening or closing the preview.
-    Ant Design Vue teleports the actual preview outside this hidden anchor.
-  -->
-  <div v-if="currentFile" class="iib-fullscreen-preview-host" hidden>
+  <div v-if="currentFile" class="iib-fullscreen-preview-host">
     <a-image
       :src="thumbSrc"
       :preview="{
@@ -62,7 +55,8 @@ onBeforeUnmount(unregister)
 </template>
 
 <style scoped>
+/* 隐藏原生容器；预览弹层通过 Teleport 挂载，不受此处影响。 */
 .iib-fullscreen-preview-host {
-  display: none !important;
+  display: none;
 }
 </style>

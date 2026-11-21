@@ -430,6 +430,22 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         if not is_path_trusted(path):
             raise HTTPException(status_code=403)
 
+    def check_write_trust(path: str):
+        """
+        A path to write to or to change has to be inside a scanned path.
+        check_path_trust is not enough, it also accepts the parents of the
+        scanned paths. Both the path as given and its normpath are checked:
+        the endpoints work on either, and with a symlink in front of a ".."
+        they point to different places.
+        """
+        if not enable_access_control:
+            return
+        parents = [os.path.realpath(p) for p in mem["all_scanned_paths"]]
+        if not parents or not all(
+            is_path_under_parents(p, parents) for p in (path, os.path.normpath(path))
+        ):
+            raise HTTPException(status_code=403)
+
     def filter_allowed_files(files: List[FileInfoDict]):
         return [x for x in files if is_path_trusted(x["fullpath"])]
 
@@ -577,10 +593,13 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         dependencies=[Depends(verify_secret), Depends(write_permission_required)],
     )
     async def delete_files(req: DeleteFilesReq):
+        # Check all paths before deleting anything.
+        for path in req.file_paths:
+            check_write_trust(path)
+
         conn = DataBase.get_conn()
 
         for path in req.file_paths:
-            check_path_trust(path)
             try:
                 if os.path.isdir(path):
                     if len(os.listdir(path)):
@@ -595,9 +614,17 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                     close_video_file_reader(path)
                     txt_path = get_img_geninfo_txt_path(path)
 
-                    os.remove(path)
-                    if txt_path:
-                        os.remove(txt_path)
+                    # A file that is already gone (deleted in another tab or
+                    # outside iib) counts as deleted: clean up its entry below
+                    # and go on with the other files. This also covers a .txt
+                    # selected along with its image, or a .txt itself, where
+                    # txt_path is the file itself.
+                    for p in (path, txt_path):
+                        if p:
+                            try:
+                                os.remove(p)
+                            except FileNotFoundError:
+                                logger.info("delete file: %s is already gone", p)
 
                     img = DbImg.get(conn, os.path.normpath(path))
                     if img:
@@ -624,9 +651,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         dependencies=[Depends(verify_secret), Depends(write_permission_required)],
     )
     async def create_folders(req: CreateFoldersReq):
-        if enable_access_control:
-            if not is_path_under_parents(req.dest_folder):
-                raise HTTPException(status_code=403)
+        check_write_trust(req.dest_folder)
         os.makedirs(req.dest_folder, exist_ok=True)
 
     class MoveFilesReq(BaseModel):
@@ -640,14 +665,52 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         dependencies=[Depends(verify_secret), Depends(write_permission_required)],
     )
     async def copy_files(req: MoveFilesReq):
+        check_write_trust(req.dest)
+        # Check all sources before changing anything: a 403 in the loop below
+        # would stop the request after some files were already handled.
+        for path in req.file_paths:
+            check_write_trust(path)
+        if req.create_dest_folder:
+            os.makedirs(req.dest, exist_ok=True)
+        elif not os.path.isdir(req.dest):
+            error_msg = (
+                f"Destination folder {req.dest} does not exist."
+                if locale == "en"
+                else f"目标文件夹 {req.dest} 不存在。"
+            )
+            raise HTTPException(400, detail=error_msg)
+
         errors = []
+        # Source files already copied by this request. A .txt is copied along
+        # with its image, images with the same stem share one, and it may also
+        # be selected itself: copy it only once.
+        copied = set()
         for path in req.file_paths:
             try:
-                check_path_trust(path)
-                shutil.copy(path, req.dest)
+                path = os.path.normpath(path)
+                if path in copied:
+                    continue
+                dest_path = os.path.join(req.dest, os.path.basename(path))
                 txt_path = get_img_geninfo_txt_path(path)
+                if txt_path == path or txt_path in copied:
+                    txt_path = None
+                dest_txt = (
+                    os.path.join(req.dest, os.path.basename(txt_path))
+                    if txt_path
+                    else None
+                )
+                # Never overwrite an existing file.
+                taken = next(
+                    (t for t in (dest_path, dest_txt) if t and os.path.lexists(t)),
+                    None,
+                )
+                if taken:
+                    raise FileExistsError(f"{taken} already exists")
+                shutil.copy(path, dest_path)
+                copied.add(path)
                 if txt_path:
-                    shutil.copy(txt_path, req.dest)
+                    shutil.copy(txt_path, dest_txt)
+                    copied.add(txt_path)
             except OSError as e:
                 error_msg = (
                     f"Error copying file {path} to {req.dest}: {e}"
@@ -665,6 +728,11 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         dependencies=[Depends(verify_secret), Depends(write_permission_required)],
     )
     async def move_files(req: MoveFilesReq):
+        check_write_trust(req.dest)
+        # Check all sources before changing anything: a 403 in the loop below
+        # would stop the request after some files were already handled.
+        for path in req.file_paths:
+            check_write_trust(path)
         if req.create_dest_folder:
             os.makedirs(req.dest, exist_ok=True)
         elif not os.path.isdir(req.dest):
@@ -677,12 +745,16 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
 
         conn = DataBase.get_conn()        
         errors = []
+        # .txt files already moved along with their image by this request.
+        # A .txt may also be selected itself: don't move or report it again.
+        moved_txts = set()
 
         def move_file_with_geninfo(path: str, dest: str):
             path = os.path.normpath(path)
             txt_path = get_img_geninfo_txt_path(path)
             if txt_path:
                 shutil.move(txt_path, dest)
+                moved_txts.add(txt_path)
             img = DbImg.get(conn, path)
             new_path = os.path.normpath(os.path.join(dest, os.path.basename(path)))
             if img:
@@ -691,11 +763,25 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
 
         for path in req.file_paths:
             try:
-                check_path_trust(path)
                 path = os.path.normpath(path)
+                if path in moved_txts:
+                    continue
                 base_dir = os.path.dirname(path)
                 files = list(os.walk(path))
                 is_dir = os.path.isdir(path)
+                # Check the targets of the file and its .txt before moving
+                # anything. The .txt is moved after the file, so a taken .txt
+                # name would leave the file in dest and its db row at the old
+                # path. A folder's .txt files move along with the folder.
+                targets = [os.path.join(req.dest, os.path.basename(path))]
+                txt_path = None if is_dir else get_img_geninfo_txt_path(path)
+                if txt_path:
+                    targets.append(
+                        os.path.join(req.dest, os.path.basename(txt_path))
+                    )
+                taken = next((t for t in targets if os.path.lexists(t)), None)
+                if taken:
+                    raise FileExistsError(f"{taken} already exists")
                 shutil.move(path, req.dest)
                 if is_dir:
                     for root, _, files in files:
@@ -1115,6 +1201,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
     @app.post(api_base + "/update_exif", dependencies=[Depends(verify_secret), Depends(write_permission_required)])
     async def update_exif(req: UpdateExifReq):
         """更新图片/视频的 exif 信息"""
+        check_write_trust(req.path)
         conn = DataBase.get_conn()
         try:
             img = DbImg.get(conn, req.path)
@@ -1250,7 +1337,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         1. dry_run=True: Scan and check for filename conflicts
         2. dry_run=False: Actually move the files
         """
-        check_path_trust(req.folder_path)
+        check_write_trust(req.folder_path)
         folder_path = os.path.normpath(req.folder_path)
 
         if not os.path.isdir(folder_path):
@@ -1267,12 +1354,26 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                     full_path = os.path.join(root, f)
                     all_files.append((full_path, f))
 
-        # Check for filename conflicts
+        # Check for filename conflicts. The generation-info .txt files move
+        # along with the images, so their names count as well. Images with
+        # the same stem in one folder share a single .txt, count it once.
         filename_count = {}
-        for _, filename in all_files:
+        txt_srcs = set()
+        for full_path, filename in all_files:
             filename_count[filename] = filename_count.get(filename, 0) + 1
+            txt_path = get_img_geninfo_txt_path(full_path)
+            if txt_path and txt_path not in txt_srcs:
+                txt_srcs.add(txt_path)
+                txt_name = os.path.basename(txt_path)
+                filename_count[txt_name] = filename_count.get(txt_name, 0) + 1
 
-        conflicts = [name for name, count in filename_count.items() if count > 1]
+        # A name is a conflict if it is used more than once or already exists
+        # in the folder itself.
+        conflicts = [
+            name
+            for name, count in filename_count.items()
+            if count > 1 or os.path.lexists(os.path.join(folder_path, name))
+        ]
 
         if req.dry_run:
             return FlattenFolderResp(
@@ -1297,6 +1398,20 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
             try:
                 dest_path = os.path.join(folder_path, filename)
 
+                # Never overwrite. The check above can miss files that appear
+                # while moving, and names in different subfolders that differ
+                # only in case on case-insensitive file systems.
+                txt_src = get_img_geninfo_txt_path(full_path)
+                targets = [dest_path]
+                if txt_src:
+                    targets.append(
+                        os.path.join(folder_path, os.path.basename(txt_src))
+                    )
+                taken = next((t for t in targets if os.path.lexists(t)), None)
+                if taken:
+                    errors.append(f"{full_path}: {taken} already exists")
+                    continue
+
                 # Move the file
                 shutil.move(full_path, dest_path)
 
@@ -1304,6 +1419,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
                 img = DbImg.get(conn, full_path)
                 if img:
                     img.update_path(conn, dest_path, force=True)
+                    conn.commit()
 
                 # Move associated txt file if exists
                 txt_path = get_img_geninfo_txt_path(full_path)
@@ -1313,6 +1429,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
 
                 moved_count += 1
             except Exception as e:
+                conn.rollback()
                 errors.append(f"{full_path}: {str(e)}")
 
         # Clean up empty directories
@@ -1373,9 +1490,20 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         from scripts.iib.userdata import import_user_data as _import
         from scripts.iib.userdata import UserDataError
 
+        def extra_path_allowed(path: str) -> bool:
+            try:
+                check_write_trust(path)
+                return True
+            except HTTPException:
+                return False
+
         def _run():
             return _import(
-                DataBase.get_conn(), req.data, mode=req.mode, dry_run=req.dry_run
+                DataBase.get_conn(),
+                req.data,
+                mode=req.mode,
+                dry_run=req.dry_run,
+                extra_path_allowed=extra_path_allowed if enable_access_control else None,
             )
 
         try:
@@ -1694,35 +1822,42 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         dependencies=[Depends(verify_secret), Depends(write_permission_required)],
     )
     async def rename_file(req: RenameFileReq):
+        check_write_trust(req.path)
+        name = req.name
+        if not name or name in (".", "..") or os.path.basename(name) != name:
+            raise HTTPException(status_code=400, detail="Invalid file name")
         conn = DataBase.get_conn()
         try:
             # Normalize the paths
 
             path = os.path.normpath(req.path)
-            new_path = os.path.join(os.path.dirname(path), req.name)
+            new_path = os.path.join(os.path.dirname(path), name)
 
             # Check if the file exists
             if not os.path.exists(path):
                 raise HTTPException(status_code=404, detail="File not found")
 
             # Check if a file with the new name already exists
-            if os.path.exists(new_path):
+            if os.path.lexists(new_path):
                 raise HTTPException(status_code=400, detail="A file with the new name already exists")
             close_video_file_reader(path)
-            img = DbImg.get(conn, path)
-            if img:
-                img.update_path(conn, new_path)
-                conn.commit()
 
             # Perform the file rename operation
             os.rename(path, new_path)
 
+            img = DbImg.get(conn, path)
+            if img:
+                img.update_path(conn, new_path, force=True)
+                conn.commit()
 
             return {"detail": "File renamed successfully", "new_path": new_path}
 
+        except HTTPException:
+            raise
         except PermissionError:
             raise HTTPException(status_code=403, detail="Permission denied")
         except Exception as e:
+            conn.rollback()
             raise HTTPException(status_code=500, detail=str(e))
 
     class RemoveCustomTagReq(BaseModel):
@@ -1780,6 +1915,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         db_api_base=db_api_base,
         verify_secret=verify_secret,
         write_permission_required=write_permission_required,
+        check_write_trust=check_write_trust,
         start_cluster_job_func=topic_cluster_funcs["start_cluster_job"],
         get_cluster_job_status_func=topic_cluster_funcs["get_cluster_job_status"],
     )
@@ -1801,9 +1937,7 @@ def infinite_image_browsing_api(app: FastAPI, **kwargs):
         dependencies=[Depends(verify_secret), Depends(write_permission_required)],
     )
     async def create_extra_path(extra_path: ExtraPathModel):
-        if enable_access_control:
-            if not is_path_under_parents(extra_path.path):
-                raise HTTPException(status_code=403)
+        check_write_trust(extra_path.path)
         conn = DataBase.get_conn()
         path = ExtraPath.get_target_path(conn, extra_path.path)
         if path:

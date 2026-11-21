@@ -13,7 +13,7 @@ If encountering problems updating. Try a fresh install of the extension and load
 > ✨ **New from the same author**: [SpindleStudio](https://github.com/zanllp/SpindleStudio) — a Threads-style parallel image generation studio. Its images carry SD WebUI–compatible metadata and are indexed by IIB out of the box.
 
 [中文文档](./README-zh.md)
-[Change log](https://github.com/zanllp/sd-webui-infinite-image-browsing/wiki/Change-log)
+[Change log](./CHANGELOG.md)
 [Installation / Running](#installation--running)
 
 
@@ -159,6 +159,22 @@ The executable version also supports ComfyUI/Fooocus/NovelAI.
 
 Download and install the program from the [`releases`](https://github.com/zanllp/infinite-image-browsing/releases) section on the right-hand side of the repository page.
 If the antivirus detects a virus, it can be ignored as a false positive. There are two versions of the compiled version for Windows, with the pyinstaller version having a lower false positive rate.
+
+### macOS (unsigned preview)
+
+Choose the `aarch64-unsigned.dmg` download for Apple Silicon (M-series), or `x64-unsigned.dmg` for Intel. macOS 14 or later is required. Drag **Infinite Image Browsing** into Applications before opening it; do not run it directly from the disk image.
+
+These builds have no Apple Developer ID signature and are not notarized. If macOS blocks the app, review [Apple's instructions for opening an unnotarized app](https://support.apple.com/en-us/102445). Only allow it if you trust the download from this repository. Do not disable Gatekeeper system-wide. An ad-hoc signature protects the integrity of bundled code, but does not make Apple trust the app.
+
+If the trusted official download still will not start, the following command removes the download quarantine flag from **this app only**, including its bundled backend:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Infinite Image Browsing.app"
+```
+
+This is an explicit per-app exception, not Apple verification. Do not run it on your Downloads folder or an entire disk. Both macOS architectures have been tested with this exception; the original quarantined downloads are still blocked by Gatekeeper.
+
+The app starts a bundled Python backend. If the window opens but the backend does not start, allowing the main app alone may not have resolved the problem. Check `iib_api_server.log` in `~/Library/Application Support/com.zanllp.iib/` and include the relevant error when reporting an issue. The database, backups, `.env`, and optional `app.conf.json` also live in this directory, not inside the app bundle. Access to protected folders is controlled separately in **System Settings > Privacy & Security > Files and Folders**.
 
 If you need to compile it yourself, please refer to https://github.com/zanllp/sd-webui-infinite-image-browsing/blob/main/.github/workflows/tauri_app_build.yml.
 
@@ -329,3 +345,19 @@ unless you select a Marengo model. You can grab a free API key (generous free ti
 <https://twelvelabs.io>.
 
 > Note: There is **no mock fallback** for AI calls. If the provider/model fails or returns invalid output, the API will return an error directly.
+
+## Testing
+
+The unit tests need no SD-webui, no GPU and no network:
+
+```bash
+python -m pytest tests/unit
+```
+
+Run them from the repository root, otherwise `scripts.iib` cannot be imported.
+`tests/unit/test_api_file_write.py` calls every endpoint that changes files
+(`rename`, `delete_files`, `copy_files`, `move_files`, `update_exif`,
+`flatten_folder`, `extra_paths`, `organize_files_start`, `import_user_data`)
+through the real FastAPI app, including which paths they are allowed to touch
+when access control is on. Everything happens inside temporary directories, so
+your library and database are not touched.

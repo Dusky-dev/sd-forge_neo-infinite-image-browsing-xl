@@ -1,6 +1,27 @@
 [跳到中文](#中文)
 # English
 
+## 2026-11-15
+### macOS desktop preview and release 1.11.0
+- Added separate Apple Silicon and Intel macOS installers. These are ad-hoc signed preview builds, without Apple Developer ID signing or notarization; macOS may still block the first launch. See the README before installing.
+- The macOS app stores its database, backups, configuration, and logs in the user's Application Support directory, so launching from Finder no longer requires writing into the launch directory.
+- Fixed the macOS parent watchdog mistaking the extra process created by Python's onefile packaging for an exited desktop app and shutting down the backend immediately.
+- The backend can still exit when the desktop app disappears after its log pipes have closed.
+- Packaged Python resources are resolved from the extraction directory. Release builds check the bundled backend's startup, image thumbnails, video covers, and shutdown; sidecar termination logs now include the signal as well as the exit code.
+- Fixed LoRA and hypernetwork name parsing in escaped prompts, closing image comparison, and structured-output requests to OpenAI-compatible services. Homepage and README changelog links now point to this file.
+
+### 🐛 Tagging stays in sync across browser tabs
+Tagging an image in one tab left every other tab opened on the same library showing the old state: the star stayed off, and the tag list and its counts on the search page went stale until the page was reloaded. Tabs now broadcast what changed and each one re-fetches only that.
+- Tagging or untagging an image (single or batch) only drops the cached tags for those paths in the other tabs, so their grids re-fetch just the affected cells instead of the whole visible page.
+- Adding, deleting, renaming or recoloring a tag invalidates the whole cache, which also refreshes the tag list and counts on the search pages.
+- Notifications are coalesced over a 150 ms window, so dragging a tag's color picker does not make the other tabs re-query on every tick.
+- Only same-origin tabs are involved, and the channel is skipped when `BroadcastChannel` is unavailable, so single-tab usage is unchanged.
+
+## 2026-11-11
+### ✨ Views: jump straight to pre-filtered images
+Save keywords, tag filters, folder scope, media type, and related search conditions as reusable Views. Opening a View takes you directly to the matching image grid and re-runs the saved query against the latest index. Keyword Views use a compact one-line toolbar with editable filters and tags collapsed by default, keeping the page focused on browsing.
+- Tag conditions are stored by name and type instead of mutable database IDs, so they still resolve correctly after an index rebuild. Missing tags fail explicitly instead of silently changing the query.
+
 ## 2026-11-01
 ### ✨ Fullscreen viewing is no longer interrupted by list refreshes
 While an image is open in full screen, a background list refresh (new images written to the folder, polling refresh, coming back to the page, walk mode loading the next batch) could close the preview or switch it to a different image; deleting the viewed image also made the preview flash and reopen.
@@ -926,6 +947,27 @@ Triggered under the same circumstances as above, there will be a button to updat
 
 
 # 中文
+
+## 2026-11-15
+### macOS 桌面预览版与 1.11.0 发布准备
+- 新增 Apple Silicon 和 Intel 独立安装包。这些是仅作 ad-hoc 签名的预览版本，没有 Apple Developer ID 签名，也未经公证；首次打开仍可能被 macOS 拦截，安装前请阅读 README。
+- macOS 版将数据库、备份、配置和日志存入用户的 Application Support 目录，从 Finder 启动不再依赖启动目录的写权限。
+- 修复 macOS 看门狗将 Python 单文件打包产生的中间进程误判为桌面主程序已退出，导致后端刚启动就自行退出的问题。
+- 主程序消失、日志管道已关闭时，后端仍能正常退出，不会因为写日志失败而留下进程。
+- 修正 Python 打包资源的查找位置。发布构建会实际检查包内后端的启动、图片缩略图、视频封面与退出，后端终止日志也增加了信号记录。
+- 修复转义提示词中的 LoRA 和 hypernetwork 名称解析、关闭图片对比、OpenAI 兼容服务的结构化输出请求。首页及 README 的更新日志链接改为直达本文件。
+
+### 🐛 多标签页打标签不再不同步
+在一个标签页里给图片打了标签，另一个开在同一图库上的标签页仍然显示旧状态：星星不亮，搜索页的标签列表和计数也要刷新页面才更新。现在各标签页之间会广播失效通知，各自只重拉真正变了的那部分。
+- 给图片打/取消标签（单张或批量）只让其他标签页丢掉这几个路径的缓存，网格只补拉受影响的格子，不会整屏重查。
+- 新增、删除、改名、改色标签会让整份缓存失效，搜索页的标签列表和计数也跟着刷新。
+- 通知在 150ms 窗口内合并，拖标签颜色选择器不会让别的标签页每动一下都重查一遍。
+- 只在同源标签页之间生效；`BroadcastChannel` 不可用时自动跳过，单标签页使用没有变化。
+
+## 2026-11-11
+### ✨ 视图：直达预筛选图片
+可将关键词、标签、目录、媒体类型等搜索条件保存为可复用视图。打开视图会直接进入匹配的图片列表，并按最新索引重新查询。关键词视图默认收起筛选栏和标签输入，只保留一行摘要与操作，方便专注看图。
+- 标签条件按名称和类型保存，不依赖易变的数据库 ID，重建索引后仍能正确恢复；标签不存在时会明确提示，不会悄悄改变查询条件。
 
 ## 2026-11-01
 ### ✨ 全屏查看不再被列表刷新打断
