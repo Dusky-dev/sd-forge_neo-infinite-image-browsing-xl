@@ -29,6 +29,26 @@ This checks both NSIS variants on Windows runners, including signing and
 unattended install/relaunch. The build jobs have read-only repository access;
 they upload verification logs, not signed installers. No tag or draft is created.
 
+## macOS startup verification
+
+The macOS app bundles the PyInstaller directory in its resources so launching
+the backend does not unpack it. To check the packaged app without touching your
+library, run:
+
+```sh
+python tests/desktop/smoke_test_desktop.py --app --max-startup-seconds 3 "/path/to/Infinite Image Browsing.app"
+```
+
+Before publishing, copy the Apple Silicon app from the release-candidate DMG
+to a new directory on the physical reference Mac and run the check on its first
+launch. Do not warm it up. The 3-second budget applies to that machine. Both
+hosted Mac runners report the same duration and must pass the full functional
+checks, but their timings are not a substitute for the hardware measurement.
+
+The check uses a fresh data directory and times process launch through WebView
+readiness and a successful library settings request. It does not time the DMG
+copy or Gatekeeper's first-open approval.
+
 ## Each release
 
 Bump the desktop version before building. The existing desktop workflow tests
