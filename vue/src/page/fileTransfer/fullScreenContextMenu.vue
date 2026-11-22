@@ -5,6 +5,7 @@ import ExifBrowser from '@/components/ExifBrowser.vue'
 import DraggableImage from '@/components/DraggableImage.vue'
 import { useGlobalStore } from '@/store/useGlobalStore'
 import { useLocalStorage } from '@vueuse/core'
+import TransferFolderMenuItem from '@/page/fileTransfer/TransferFolderMenuItem.vue'
 import type { MenuInfo } from 'ant-design-vue/lib/menu/src/interface'
 import { debounce, throttle, last } from 'lodash-es'
 import { computed, watch, onMounted } from 'vue'
@@ -39,6 +40,7 @@ import * as Pinyin from 'jian-pinyin'
 import { Tag } from '@/api/db'
 import { aiChat } from '@/api'
 import { message } from 'ant-design-vue'
+import { basename, getMoveUpDest, normalize } from '@/util/path'
 
 const global = useGlobalStore()
 
@@ -48,6 +50,11 @@ const props = defineProps<{
   file: FileNodeInfo
   idx: number
 }>()
+const moveUpDest = computed(() => getMoveUpDest(props.file.fullpath, global.quickMovePaths))
+const moveUpName = computed(() => basename(moveUpDest.value) || moveUpDest.value)
+const moveToPaths = computed(() =>
+  global.quickMovePaths.filter((v) => !moveUpDest.value || normalize(v.dir) !== normalize(moveUpDest.value))
+)
 const selectedTag = computed(() => tagStore.tagMap.get(props.file.fullpath) ?? [])
 const currImgResolution = ref('')
 const q = createReactiveQueue()
@@ -109,6 +116,11 @@ watch(
     exifData.value = {}
     if (promptTabActivedKey.value === 'exif') {
       loadExifData()
+    }
+    // the grid only fetches tags for its viewable area, and it does not scroll while previewing,
+    // so fetch them here for files navigated to with the arrow keys/buttons
+    if (props.file.is_under_scanned_path) {
+      tagStore.fetchImageTags([path])
     }
   },
   { immediate: true }
@@ -518,12 +530,26 @@ const editPromptAndReload = async () => {
                 </template>
                 <a-menu-item key="send2BatchDownload">{{ $t('sendToBatchDownload') }}</a-menu-item>
                 <a-sub-menu key="copy2target" :title="$t('copyTo')">
-                  <a-menu-item v-for="path in global.quickMovePaths" :key="`copy-to-${path.dir}`">{{ path.zh }}
-                  </a-menu-item>
+                  <template v-if="moveUpDest">
+                    <TransferFolderMenuItem mode="copy" :folder="moveUpDest" :label="`↑ ${$t('moveUpOneLevel', { name: moveUpName })}`"
+                      @browse="emit('contextMenuClick', $event, file, idx)" />
+                    <a-menu-divider />
+                  </template>
+                  <TransferFolderMenuItem v-for="path in moveToPaths" :key="path.dir" mode="copy" :folder="path.dir" :label="path.zh"
+                    @browse="emit('contextMenuClick', $event, file, idx)" />
+                  <a-menu-divider />
+                  <a-menu-item key="copyToOtherFolder">{{ $t('otherFolder') }}</a-menu-item>
                 </a-sub-menu>
                 <a-sub-menu key="move2target" :title="$t('moveTo')">
-                  <a-menu-item v-for="path in global.quickMovePaths" :key="`move-to-${path.dir}`">{{ path.zh }}
-                  </a-menu-item>
+                  <template v-if="moveUpDest">
+                    <TransferFolderMenuItem mode="move" :folder="moveUpDest" :label="`↑ ${$t('moveUpOneLevel', { name: moveUpName })}`"
+                      @browse="emit('contextMenuClick', $event, file, idx)" />
+                    <a-menu-divider />
+                  </template>
+                  <TransferFolderMenuItem v-for="path in moveToPaths" :key="path.dir" mode="move" :folder="path.dir" :label="path.zh"
+                    @browse="emit('contextMenuClick', $event, file, idx)" />
+                  <a-menu-divider />
+                  <a-menu-item key="moveToOtherFolder">{{ $t('otherFolder') }}</a-menu-item>
                 </a-sub-menu>
                 <a-menu-divider />
                 <a-menu-item key="deleteFiles">
