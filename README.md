@@ -1,12 +1,48 @@
-[FORK INFO]
+# Fork info: Infinite Image Browsing for Forge Neo, with JPEG XL support
 
-Adds JPEG-XL(JXL) support to IIB
+This is a fork of [zanllp/sd-webui-infinite-image-browsing](https://github.com/zanllp/sd-webui-infinite-image-browsing).
+It currently tracks upstream **v1.12.1**. Upstream changes are merged in
+as normal merge commits, and the fork's changes are kept on top.
 
-Support for Forge Neo (only one tested)
+**Tested with:** Stable Diffusion WebUI Forge Neo. This is the only host it has been tested with.
 
-If encountering problems updating. Try a fresh install of the extension and load your latest database.
+### What this fork adds
 
-[ORIGINAL REPO]
+- **JPEG XL (`.jxl`) support.** JXL files are indexed, thumbnailed, previewed and recognized in
+  smart-organize previews. Support comes from `pillow-jxl-plugin`, which is listed in
+  `requirements.txt`, with a PyInstaller hook for the standalone build.
+- **Forge Neo compatibility:**
+  - imports fall back between `generation_parameters_copypaste` and `infotext_utils`;
+  - request tracking no longer adds middleware after Forge has started;
+  - SQLite schema migrations no longer run on every request thread.
+- **Safer file serving.** Thumbnail, image and media endpoints reject directories and missing
+  paths with a clean 400/404, instead of crashing in `FileResponse`.
+- **Checkpoint filter for "Try My Luck".** The random gallery can be limited to images made
+  with one model checkpoint.
+- **Navigation and display fixes:**
+  - a folder opens on the first click;
+  - breadcrumbs and the back button work reliably;
+  - scroll position is restored when you go back to a folder;
+  - the grid no longer goes blank after you switch Gradio tabs and come back;
+  - fullscreen preview no longer leaves a "ghost" image behind.
+
+### Install / update
+
+Install it like any other extension, using this repository's URL in Forge Neo's
+*Extensions → Install from URL*. Then restart the WebUI so the Python requirements
+(including `pillow-jxl-plugin`) are installed.
+
+If an update fails, make a fresh install of the extension. Your database (`iib.db`) is
+created in the WebUI's working directory, normally the Forge Neo root folder, not in the extension
+folder. You can override that location with the `IIB_DB_PATH` environment variable. Copy the file
+somewhere safe before reinstalling, then restore it or load your latest backup.
+
+Upstream's desktop app (Tauri) features, such as the in-app updater, are kept so that
+future merges stay clean. They are inactive when IIB runs as a Forge Neo extension.
+
+---
+
+# Original README (upstream)
 
 > 🌍 i18n Advisory: Some translations may be incomplete or inaccurate. Pull requests are welcome for improvements!
 
