@@ -32,8 +32,10 @@ Install it like any other extension, using this repository's URL in Forge Neo's
 *Extensions → Install from URL*. Then restart the WebUI so the Python requirements
 (including `pillow-jxl-plugin`) are installed.
 
-If an update fails, make a fresh install of the extension and keep your existing
-database file (`iib.db`), or load your latest backup of it.
+If an update fails, make a fresh install of the extension. Your database (`iib.db`) is
+created in the WebUI's working directory, normally the Forge Neo root folder, not in the extension
+folder. You can override that location with the `IIB_DB_PATH` environment variable. Copy the file
+somewhere safe before reinstalling, then restore it or load your latest backup.
 
 Upstream's desktop app (Tauri) features, such as the in-app updater, are kept so that
 future merges stay clean. They are inactive when IIB runs as a Forge Neo extension.
